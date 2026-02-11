@@ -1,5 +1,5 @@
 import {
-  "mizchi/lib" @lib,
+  "mizchi/bitflow" @lib,
   "moonbitlang/async",
 }
 

@@ -1,24 +1,21 @@
-# MoonBit Template
+# bitflow
 
-A minimal MoonBit project template with CI, justfile, and AI coding assistant support.
+Workflow engine core for `bit workspace`.
 
-## Usage
+This repository hosts reusable, pure workflow logic that is being migrated out
+from `mizchi/bit`:
 
-Clone this repository and start coding:
+- DAG validation
+- topological ordering
+- affected-node expansion
+- flow cache key / fingerprint generation
+- direct IR execution API
+- Starlark subset parser (`workflow/node/task/entrypoint`)
+- environment-agnostic adapters (`WorkflowAdapter`, `FsAdapter`, `CommandAdapter`)
 
-```bash
-git clone https://github.com/mizchi/moonbit-template my-project
-cd my-project
-```
+## Package
 
-Update `moon.mod.json` with your module name:
-
-```json
-{
-  "name": "your-username/your-project",
-  ...
-}
-```
+- `mizchi/bitflow/workflow`
 
 ## Quick Commands
 
@@ -27,38 +24,24 @@ just           # check + test
 just fmt       # format code
 just check     # type check
 just test      # run tests
-just test-update  # update snapshot tests
-just run       # run main
 just info      # generate type definition files
 ```
 
-## Project Structure
+## Example
 
+```mbt
+import {
+  "mizchi/bitflow/workflow" @wf,
+}
+
+let nodes = [
+  @wf.new_node("root", []),
+  @wf.new_node("dep", ["root"]),
+]
+
+let ordered = @wf.topological_nodes(nodes)
+let issues = @wf.graph_issues(nodes)
 ```
-my-project/
-├── moon.mod.json      # Module configuration
-├── src/
-│   ├── moon.pkg       # Package configuration
-│   ├── lib.mbt        # Library code
-│   ├── lib_test.mbt   # Tests
-│   ├── lib_bench.mbt  # Benchmarks
-│   ├── API.mbt.md     # Doc tests
-│   └── main/
-│       ├── moon.pkg
-│       └── main.mbt   # Entry point
-├── justfile           # Task runner
-└── .github/workflows/
-    └── ci.yml         # GitHub Actions CI
-```
-
-## Features
-
-- `src/` directory structure with `moon.pkg` format
-- Snapshot testing with `inspect()`
-- Doc tests in `.mbt.md` files
-- Benchmarks with `moon bench`
-- GitHub Actions CI
-- Claude Code / GitHub Copilot support (AGENTS.md)
 
 ## License
 

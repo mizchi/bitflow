@@ -1,5 +1,5 @@
 // Generated using `moon info`, DON'T EDIT IT
-package "mizchi/lib"
+package "mizchi/bitflow"
 
 // Values
 pub fn fib(Int) -> Int64
