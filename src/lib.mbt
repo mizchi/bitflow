@@ -1,8 +1,10 @@
 ///|
 /// Calculate the n-th Fibonacci number.
 ///
-/// ```mbt test
-/// inspect(fib(10), content="89")
+/// ```mbt check
+/// test {
+///   inspect(fib(10), content="89")
+/// }
 /// ```
 pub fn fib(n : Int) -> Int64 {
   loop (n, 0L, 1L) {
@@ -17,9 +19,9 @@ pub fn fib(n : Int) -> Int64 {
 /// length is an optional labelled argument without default value having type Option[Int]
 pub fn sum(data~ : Array[Int], start? : Int = 0, length? : Int) -> Int {
   let end = if length is Some(length) { start + length } else { data.length() }
-  for i = start, sum = 0; i < end; i = i + 1, sum = sum + data[i] {
-
-  } else {
-    sum
+  let mut total = 0
+  for i = start; i < end; i = i + 1 {
+    total = total + data[i]
   }
+  total
 }
