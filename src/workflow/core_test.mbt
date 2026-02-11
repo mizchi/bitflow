@@ -37,6 +37,13 @@ test "workflow: graph issues reports duplicate id and unknown dependency" {
 }
 
 ///|
+test "workflow: graph issues reports dependency cycle" {
+  let nodes = [new_node("a", ["b"]), new_node("b", ["a"])]
+  let text = graph_issues(nodes).join("\n")
+  assert_true(text.contains("dependency graph has a cycle"))
+}
+
+///|
 test "workflow: expand affected propagates to neighbors and dependents" {
   let nodes = [
     new_node("root", []),
@@ -50,6 +57,14 @@ test "workflow: expand affected propagates to neighbors and dependents" {
   assert_eq(affected.get("dep") is Some(_), true)
   assert_eq(affected.get("leaf") is Some(_), true)
   assert_eq(affected.get("extra") is Some(_), false)
+}
+
+///|
+test "workflow: expand affected ignores unknown initial node ids" {
+  let nodes = [new_node("root", []), new_node("dep", ["root"])]
+  let affected = expand_affected_nodes(nodes, { "unknown": true })
+  assert_eq(affected.get("root") is Some(_), false)
+  assert_eq(affected.get("dep") is Some(_), false)
 }
 
 ///|

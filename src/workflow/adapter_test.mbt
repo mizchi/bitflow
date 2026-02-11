@@ -50,6 +50,25 @@ test "workflow adapter: execute_ir_with_adapter propagates command results" {
 }
 
 ///|
+test "workflow adapter: failure message falls back to stdout when stderr is empty" {
+  let ir = new_ir("ci", [new_node("root", [])], [
+    new_task("root:build", "root", "build", []),
+  ])
+  let adapter = WorkflowAdapter::new(
+    FsAdapter::none(),
+    CommandAdapter::new(fn(_cmd : String, _cwd : String?) {
+      command_failure(stdout="stdout failure", stderr="")
+    }),
+  )
+  let result = execute_ir_with_adapter(ir, adapter)
+  assert_eq(result.ok, false)
+  assert_eq(result.state, "partial_failed")
+  assert_eq(result.steps.length(), 1)
+  assert_eq(result.steps[0].status, "failed")
+  assert_eq(result.steps[0].message, "stdout failure")
+}
+
+///|
 test "workflow adapter: fs-backed starlark run and report write" {
   let src =
     #|workflow(name="ci")
