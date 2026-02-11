@@ -22,6 +22,188 @@ fn run_optional_fail(task : FlowTask) -> (Bool, String) {
 }
 
 ///|
+fn trim_ascii_space(s : String) -> String {
+  let mut start = 0
+  let mut end = s.length()
+  while start < end {
+    let ch = s.unsafe_get(start)
+    if ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' {
+      start += 1
+    } else {
+      break
+    }
+  }
+  while end > start {
+    let ch = s.unsafe_get(end - 1)
+    if ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' {
+      end -= 1
+    } else {
+      break
+    }
+  }
+  if start == 0 && end == s.length() {
+    s
+  } else {
+    String::unsafe_substring(s, start~, end~)
+  }
+}
+
+///|
+fn parse_chunk_expected_literal(raw : String) -> String? {
+  let text = trim_ascii_space(raw)
+  if text.length() < 2 {
+    return None
+  }
+  if text.has_prefix("\"") && text.has_suffix("\"") {
+    return Some(String::unsafe_substring(text, start=1, end=text.length() - 1))
+  }
+  let first = text.unsafe_get(0)
+  let last = text.unsafe_get(text.length() - 1)
+  if first.to_int() == 96 && last.to_int() == 96 {
+    return Some(String::unsafe_substring(text, start=1, end=text.length() - 1))
+  }
+  None
+}
+
+///|
+fn parse_chunk_source_line(line : String) -> (String, String?) {
+  match line.find("###") {
+    Some(idx) => {
+      let code = trim_ascii_space(
+        String::unsafe_substring(line, start=0, end=idx),
+      )
+      let expected_text = String::unsafe_substring(
+        line,
+        start=idx + 3,
+        end=line.length(),
+      )
+      (code, parse_chunk_expected_literal(expected_text))
+    }
+    None => (trim_ascii_space(line), None)
+  }
+}
+
+///|
+fn parse_starlark_go_chunked_cases(text : String) -> Array[(String, String?)] {
+  let lines : Array[String] = []
+  for view in text.split("\n") {
+    lines.push(view.to_string())
+  }
+  // Sentinel delimiter to flush last case.
+  lines.push("---")
+
+  let cases : Array[(String, String?)] = []
+  let mut current_lines : Array[String] = []
+  let mut current_expected : String? = None
+
+  for raw_line in lines {
+    let trimmed = trim_ascii_space(raw_line)
+    if trimmed == "---" {
+      if current_lines.length() > 0 {
+        cases.push((current_lines.join("\n"), current_expected))
+      }
+      current_lines = []
+      current_expected = None
+      continue
+    }
+    if trimmed.length() == 0 {
+      continue
+    }
+    if trimmed.has_prefix("#") && raw_line.find("###") is None {
+      continue
+    }
+    let (code, expected) = parse_chunk_source_line(raw_line)
+    if code.length() > 0 {
+      current_lines.push(code)
+    }
+    match expected {
+      Some(value) => current_expected = Some(value)
+      None => ()
+    }
+  }
+  cases
+}
+
+///|
+fn starlark_go_errors_subset_chunked_embedded() -> String {
+  let text =
+    #|# source=embedded-fallback
+    #|workflow(1+2 = 3) ### "keyword argument must have form name=expr"
+    #|---
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[])
+    #|task(id="root:build", node="root", cmd="build", *, needs=[]) ### "splat arguments are not supported"
+    #|---
+    #|workflow(name="ci",
+    #|### "expected ')' to close argument list"
+    #|---
+    #|workflow(name="ci",)
+    #|node(id="root", depends_on=[],)
+    #|task(id="root:build", node="root", cmd="build", needs=[],)
+    #|entrypoint(targets=["root:build"],)
+    #|---
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[])
+    #|task(id="root:build", node="root", cmd="\x-0", needs=[]) ### "invalid escape sequence"
+  text
+}
+
+///|
+#cfg(target="js")
+extern "js" fn read_starlark_go_errors_subset_from_fs() -> String? =
+  #| function() {
+  #|   try {
+  #|     const fs = require("node:fs");
+  #|     const path = require("node:path");
+  #|     const cwd = (typeof process !== "undefined" && typeof process.cwd === "function")
+  #|       ? process.cwd()
+  #|       : ".";
+  #|     const candidates = [
+  #|       path.join(cwd, "src/workflow/testdata/starlark_go_errors_subset.star"),
+  #|       path.join(cwd, "../src/workflow/testdata/starlark_go_errors_subset.star"),
+  #|       path.join(cwd, "../../src/workflow/testdata/starlark_go_errors_subset.star"),
+  #|       "src/workflow/testdata/starlark_go_errors_subset.star",
+  #|     ];
+  #|     for (const p of candidates) {
+  #|       if (fs.existsSync(p)) {
+  #|         return fs.readFileSync(p, "utf8");
+  #|       }
+  #|     }
+  #|     return null;
+  #|   } catch (_err) {
+  #|     return null;
+  #|   }
+  #| }
+
+///|
+#cfg(target="js")
+fn starlark_go_errors_subset_chunked() -> String {
+  let fallback = starlark_go_errors_subset_chunked_embedded()
+  match read_starlark_go_errors_subset_from_fs() {
+    Some(text) => text
+    None => fallback
+  }
+}
+
+///|
+#cfg(not(target="js"))
+fn starlark_go_errors_subset_chunked() -> String {
+  starlark_go_errors_subset_chunked_embedded()
+}
+
+///|
+#cfg(target="js")
+fn expected_starlark_go_errors_source_marker() -> String {
+  "# source=external-file"
+}
+
+///|
+#cfg(not(target="js"))
+fn expected_starlark_go_errors_source_marker() -> String {
+  "# source=embedded-fallback"
+}
+
+///|
 test "workflow engine: direct API executes topological tasks" {
   let nodes = [new_node("root", []), new_node("dep", ["root"])]
   let tasks = [
@@ -176,4 +358,164 @@ test "workflow engine: execute_starlark_subset runs parsed workflow directly" {
   assert_eq(result.state, "completed")
   assert_eq(result.order.length(), 1)
   assert_eq(result.steps[0].status, "success")
+}
+
+///|
+test "workflow engine: starlark compatibility accepts semicolon separated calls" {
+  let src =
+    #|workflow(name='ci'); node(id='root', depends_on=[]); task(id='root:build', node='root', cmd='build', needs=[]); entrypoint(targets=['root:build'])
+  let parsed = parse_starlark_subset(src)
+  assert_eq(parsed.errors.length(), 0)
+  assert_eq(parsed.ir.name, "ci")
+  assert_eq(parsed.ir.nodes.length(), 1)
+  assert_eq(parsed.ir.tasks.length(), 1)
+  assert_eq(parsed.ir.entry_targets.length(), 1)
+}
+
+///|
+test "workflow engine: starlark compatibility accepts trailing comma in call args" {
+  let src =
+    #|workflow(name="ci",)
+    #|node(id="root", depends_on=[],)
+    #|task(id="root:test", node="root", cmd=["just", "test",], needs=[],)
+    #|entrypoint(targets=["root:test"],)
+  let parsed = parse_starlark_subset(src)
+  assert_eq(parsed.errors.length(), 0)
+  assert_eq(parsed.ir.tasks.length(), 1)
+  assert_eq(parsed.ir.tasks[0].cmd, "just test")
+}
+
+///|
+test "workflow engine: starlark compatibility supports single quote and bool literal" {
+  let src =
+    #|workflow(name='ci')
+    #|node(id='root', depends_on=[], required=False)
+    #|task(id='root:lint', node='root', cmd='lint', needs=[], required=True)
+    #|entrypoint(targets=['root:lint'])
+  let parsed = parse_starlark_subset(src)
+  assert_eq(parsed.errors.length(), 0)
+  assert_eq(parsed.ir.nodes.length(), 1)
+  assert_eq(parsed.ir.nodes[0].required, false)
+  assert_eq(parsed.ir.tasks[0].required, true)
+}
+
+///|
+test "workflow engine: starlark semantics rejects unknown keyword argument" {
+  let src =
+    #|workflow(name="ci", unknown=1)
+    #|node(id="root", depends_on=[])
+    #|task(id="root:build", node="root", cmd="build", needs=[])
+    #|entrypoint(targets=["root:build"])
+  let parsed = parse_starlark_subset(src)
+  let text = parsed.errors.join("\n")
+  assert_true(text.contains("unknown argument"))
+}
+
+///|
+test "workflow engine: starlark semantics rejects duplicate keyword argument" {
+  let src =
+    #|workflow(name="ci", name="prod")
+  let parsed = parse_starlark_subset(src)
+  let text = parsed.errors.join("\n")
+  assert_true(text.contains("duplicate argument"))
+}
+
+///|
+test "workflow engine: starlark semantics validates list element types" {
+  let src =
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[])
+    #|node(id="dep", depends_on=["root", 1])
+    #|task(id="root:build", node="root", cmd="build", needs=[])
+    #|task(id="dep:test", node="dep", cmd="test", needs=["root:build"])
+    #|entrypoint(targets=["dep:test"])
+  let parsed = parse_starlark_subset(src)
+  let text = parsed.errors.join("\n")
+  assert_true(text.contains("depends_on"))
+}
+
+///|
+test "workflow engine: starlark compatibility rejects splat arguments" {
+  let src =
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[])
+    #|task(id="root:build", node="root", cmd="build", *, needs=[])
+  let parsed = parse_starlark_subset(src)
+  let text = parsed.errors.join("\n")
+  assert_true(text.contains("splat arguments"))
+}
+
+///|
+test "workflow engine: starlark compatibility requires name=expr keyword syntax" {
+  let src =
+    #|workflow(1+2 = 3)
+  let parsed = parse_starlark_subset(src)
+  let text = parsed.errors.join("\n")
+  assert_true(text.contains("keyword argument must have form name=expr"))
+}
+
+///|
+test "workflow engine: starlark-go errors.star failure subset" {
+  // Derived from google/starlark-go/syntax/testdata/errors.star
+  let case_keyword_arg =
+    #|workflow(1+2 = 3)
+  let case_splat =
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[])
+    #|task(id="root:build", node="root", cmd="build", *, needs=[])
+  let case_invalid_escape =
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[])
+    #|task(id="root:build", node="root", cmd="\x-0", needs=[])
+  let case_unclosed_paren =
+    #|workflow(name="ci",
+  let cases = [
+    (case_keyword_arg, "keyword argument must have form name=expr"),
+    (case_splat, "splat arguments are not supported"),
+    (case_invalid_escape, "invalid escape sequence"),
+    (case_unclosed_paren, "expected ')' to close argument list"),
+  ]
+  for entry in cases {
+    let (source, expected) = entry
+    let parsed = parse_starlark_subset(source)
+    let text = parsed.errors.join("\n")
+    assert_true(text.contains(expected))
+  }
+}
+
+///|
+test "workflow engine: starlark-go errors.star trailing comma subset" {
+  // Equivalent to "f(a,)" style trailing comma acceptance in errors.star
+  let case_trailing_comma_a =
+    #|workflow(name="ci",)
+    #|node(id="root", depends_on=[],)
+    #|task(id="root:build", node="root", cmd="build", needs=[],)
+    #|entrypoint(targets=["root:build"],)
+  let case_trailing_comma_b =
+    #|workflow(name='ci',)
+    #|node(id='root', depends_on=['dep',],)
+    #|task(id='root:build', node='root', cmd=['just', 'test',], needs=[],)
+    #|entrypoint(targets=['root:build',],)
+  let cases = [case_trailing_comma_a, case_trailing_comma_b]
+  for source in cases {
+    let parsed = parse_starlark_subset(source)
+    assert_eq(parsed.errors.length(), 0)
+  }
+}
+
+///|
+test "workflow engine: starlark-go chunked errors subset is executable" {
+  let chunked_text = starlark_go_errors_subset_chunked()
+  let source_marker = expected_starlark_go_errors_source_marker()
+  assert_true(chunked_text.contains(source_marker))
+  let cases = parse_starlark_go_chunked_cases(chunked_text)
+  assert_eq(cases.length(), 5)
+  for entry in cases {
+    let (source, expected) = entry
+    let parsed = parse_starlark_subset(source)
+    match expected {
+      Some(msg) => assert_true(parsed.errors.join("\n").contains(msg))
+      None => assert_eq(parsed.errors.length(), 0)
+    }
+  }
 }

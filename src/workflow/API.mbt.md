@@ -76,6 +76,33 @@ test {
 }
 ```
 
+## load (fs parse mode)
+
+`parse_starlark_subset_from_fs` / `execute_starlark_subset_from_fs` supports
+`load("path.star")` to split workflow definitions.
+
+```mbt check
+///|
+test {
+  let root =
+    #|load("defs/common.star")
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[])
+    #|task(id="root:build", node="root", cmd="build", needs=[])
+    #|entrypoint(targets=["root:test"])
+  let common =
+    #|node(id="dep", depends_on=["root"])
+    #|task(id="root:test", node="dep", cmd="test", needs=["root:build"])
+  let adapter = WorkflowAdapter::new(
+    FsAdapter::memory_with({ "workflow.star": root, "defs/common.star": common }),
+    CommandAdapter::none(),
+  )
+  let parsed = parse_starlark_subset_from_fs("workflow.star", adapter)
+  inspect(parsed.errors.length(), content="0")
+  inspect(parsed.ir.tasks.length(), content="2")
+}
+```
+
 ## adapter APIs
 
 Use `WorkflowAdapter` to wire command and filesystem behavior from outside.

@@ -125,3 +125,66 @@ test "workflow adapter: none fs cannot write report" {
     false,
   )
 }
+
+///|
+test "workflow adapter: starlark load() merges external files from fs" {
+  let root_src =
+    #|load("defs/common.star")
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[])
+    #|task(id="root:build", node="root", cmd="build", needs=[])
+    #|entrypoint(targets=["root:test"])
+  let common_src =
+    #|node(id="dep", depends_on=["root"])
+    #|task(id="root:test", node="dep", cmd="test", needs=["root:build"])
+  let adapter = WorkflowAdapter::new(
+    FsAdapter::memory_with({
+      "workflow.star": root_src,
+      "defs/common.star": common_src,
+    }),
+    CommandAdapter::new(fn(cmd : String, _cwd : String?) {
+      command_success(stdout="ran:" + cmd)
+    }),
+  )
+  let parsed = parse_starlark_subset_from_fs("workflow.star", adapter)
+  assert_eq(parsed.errors.length(), 0)
+  assert_eq(parsed.ir.nodes.length(), 2)
+  assert_eq(parsed.ir.tasks.length(), 2)
+  let result = execute_starlark_subset_from_fs("workflow.star", adapter)
+  assert_eq(result.ok, true)
+  assert_eq(result.order.length(), 2)
+}
+
+///|
+test "workflow adapter: starlark load() reports cycle" {
+  let root_src =
+    #|load("defs/a.star")
+  let a_src =
+    #|load("../workflow.star")
+    #|node(id="a", depends_on=[])
+    #|task(id="a:run", node="a", cmd="run", needs=[])
+  let adapter = WorkflowAdapter::new(
+    FsAdapter::memory_with({ "workflow.star": root_src, "defs/a.star": a_src }),
+    CommandAdapter::none(),
+  )
+  let parsed = parse_starlark_subset_from_fs("workflow.star", adapter)
+  assert_true(parsed.errors.length() > 0)
+  let text = parsed.errors.join("\n")
+  assert_true(text.contains("load cycle"))
+}
+
+///|
+test "workflow adapter: starlark load() reports missing file" {
+  let root_src =
+    #|load("defs/missing.star")
+    #|workflow(name="ci")
+  let adapter = WorkflowAdapter::new(
+    FsAdapter::memory_with({ "workflow.star": root_src }),
+    CommandAdapter::none(),
+  )
+  let parsed = parse_starlark_subset_from_fs("workflow.star", adapter)
+  assert_true(parsed.errors.length() > 0)
+  let text = parsed.errors.join("\n")
+  assert_true(text.contains("failed to read loaded file"))
+  assert_true(text.contains("defs/missing.star"))
+}

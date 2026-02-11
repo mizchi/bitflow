@@ -10,7 +10,7 @@ from `mizchi/bit`:
 - affected-node expansion
 - flow cache key / fingerprint generation
 - direct IR execution API
-- Starlark subset parser (`workflow/node/task/entrypoint`)
+- Starlark subset parser (`workflow/node/task/entrypoint/load`)
 - environment-agnostic adapters (`WorkflowAdapter`, `FsAdapter`, `CommandAdapter`)
 
 ## Package
