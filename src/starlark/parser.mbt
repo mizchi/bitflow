@@ -539,7 +539,9 @@ fn StarlarkParser::parse_dict(self : StarlarkParser) -> StarlarkValue? {
       return None
     }
     return Some(
-      DictComp(first_key_expr, first_value_expr, loop_name, iter_expr, cond_expr),
+      DictComp(
+        first_key_expr, first_value_expr, loop_name, iter_expr, cond_expr,
+      ),
     )
   }
 

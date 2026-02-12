@@ -319,6 +319,7 @@ fn normalize_index(raw : Int, length : Int) -> Int {
   }
 }
 
+///|
 fn resolve_index(
   target : StarlarkValue,
   index : StarlarkValue,
@@ -485,15 +486,7 @@ fn resolve_slice(
       }
       let end_idx = match
         resolve_slice_bound_with_step(
-          end,
-          len,
-          -1,
-          "slice end",
-          len,
-          step_value,
-          line,
-          column,
-          errors,
+          end, len, -1, "slice end", len, step_value, line, column, errors,
         ) {
         Some(v) => v
         None => return None
@@ -532,15 +525,7 @@ fn resolve_slice(
       }
       let end_idx = match
         resolve_slice_bound_with_step(
-          end,
-          len,
-          -1,
-          "slice end",
-          len,
-          step_value,
-          line,
-          column,
-          errors,
+          end, len, -1, "slice end", len, step_value, line, column, errors,
         ) {
         Some(v) => v
         None => return None
@@ -1747,11 +1732,7 @@ fn resolve_value(
       }
       let iter_items = match
         iterable_items_for_comprehension(
-          resolved_iter,
-          line,
-          column,
-          errors,
-          "list comprehension iterable",
+          resolved_iter, line, column, errors, "list comprehension iterable",
         ) {
         Some(items) => items
         None => return None
@@ -1762,7 +1743,8 @@ fn resolve_value(
         local_bindings[loop_name] = iter_item
         let should_include = match cond_expr {
           Some(cond_value) =>
-            match resolve_value(cond_value, local_bindings, line, column, errors) {
+            match
+              resolve_value(cond_value, local_bindings, line, column, errors) {
               Some(cond_result) => value_truthy(cond_result)
               None => return None
             }
@@ -1786,11 +1768,7 @@ fn resolve_value(
       }
       let iter_items = match
         iterable_items_for_comprehension(
-          resolved_iter,
-          line,
-          column,
-          errors,
-          "dict comprehension iterable",
+          resolved_iter, line, column, errors, "dict comprehension iterable",
         ) {
         Some(items) => items
         None => return None
@@ -1801,7 +1779,8 @@ fn resolve_value(
         local_bindings[loop_name] = iter_item
         let should_include = match cond_expr {
           Some(cond_value) =>
-            match resolve_value(cond_value, local_bindings, line, column, errors) {
+            match
+              resolve_value(cond_value, local_bindings, line, column, errors) {
               Some(cond_result) => value_truthy(cond_result)
               None => return None
             }
@@ -1819,10 +1798,7 @@ fn resolve_value(
           Str(text) => text
           _ => {
             semantic_error(
-              errors,
-              line,
-              column,
-              "dict comprehension key must evaluate to string",
+              errors, line, column, "dict comprehension key must evaluate to string",
             )
             return None
           }

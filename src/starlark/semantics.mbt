@@ -287,7 +287,13 @@ fn resolve_value_with_functions(
     MethodCall(receiver, name, args) => {
       let resolved_receiver = match
         resolve_value_with_functions(
-          receiver, bindings, functions, line, column, errors, call_stack~,
+          receiver,
+          bindings,
+          functions,
+          line,
+          column,
+          errors,
+          call_stack~,
         ) {
         Some(value) => value
         None => return None
@@ -296,7 +302,13 @@ fn resolve_value_with_functions(
       for arg in args {
         match
           resolve_value_with_functions(
-            arg, bindings, functions, line, column, errors, call_stack~,
+            arg,
+            bindings,
+            functions,
+            line,
+            column,
+            errors,
+            call_stack~,
           ) {
           Some(v) => resolved_args.push(v)
           None => return None
@@ -383,7 +395,13 @@ fn resolve_value_with_functions(
     ListComp(item_expr, loop_name, iter_expr, cond_expr) => {
       let resolved_iter = match
         resolve_value_with_functions(
-          iter_expr, bindings, functions, line, column, errors, call_stack~,
+          iter_expr,
+          bindings,
+          functions,
+          line,
+          column,
+          errors,
+          call_stack~,
         ) {
         Some(value) => value
         None => return None
@@ -426,7 +444,12 @@ fn resolve_value_with_functions(
         }
         match
           resolve_value_with_functions(
-            item_expr, local_bindings, functions, line, column, errors,
+            item_expr,
+            local_bindings,
+            functions,
+            line,
+            column,
+            errors,
             call_stack~,
           ) {
           Some(resolved_item) => resolved_items.push(resolved_item)
@@ -438,7 +461,13 @@ fn resolve_value_with_functions(
     DictComp(key_expr, value_expr, loop_name, iter_expr, cond_expr) => {
       let resolved_iter = match
         resolve_value_with_functions(
-          iter_expr, bindings, functions, line, column, errors, call_stack~,
+          iter_expr,
+          bindings,
+          functions,
+          line,
+          column,
+          errors,
+          call_stack~,
         ) {
         Some(value) => value
         None => return None
@@ -481,7 +510,13 @@ fn resolve_value_with_functions(
         }
         let resolved_key = match
           resolve_value_with_functions(
-            key_expr, local_bindings, functions, line, column, errors, call_stack~,
+            key_expr,
+            local_bindings,
+            functions,
+            line,
+            column,
+            errors,
+            call_stack~,
           ) {
           Some(value) => value
           None => return None
@@ -490,10 +525,7 @@ fn resolve_value_with_functions(
           Str(text) => text
           _ => {
             semantic_error_with_stack(
-              errors,
-              line,
-              column,
-              "dict comprehension key must evaluate to string",
+              errors, line, column, "dict comprehension key must evaluate to string",
               call_stack,
             )
             return None
@@ -501,7 +533,12 @@ fn resolve_value_with_functions(
         }
         match
           resolve_value_with_functions(
-            value_expr, local_bindings, functions, line, column, errors,
+            value_expr,
+            local_bindings,
+            functions,
+            line,
+            column,
+            errors,
             call_stack~,
           ) {
           Some(resolved_value) => resolved_items[key] = resolved_value
@@ -520,14 +557,26 @@ fn resolve_value_with_functions(
     Slice(target, start, end, step) =>
       match
         resolve_value_with_functions(
-          target, bindings, functions, line, column, errors, call_stack~,
+          target,
+          bindings,
+          functions,
+          line,
+          column,
+          errors,
+          call_stack~,
         ) {
         Some(resolved_target) => {
           let resolved_start = match start {
             Some(expr) =>
               match
                 resolve_value_with_functions(
-                  expr, bindings, functions, line, column, errors, call_stack~,
+                  expr,
+                  bindings,
+                  functions,
+                  line,
+                  column,
+                  errors,
+                  call_stack~,
                 ) {
                 Some(v) => Some(v)
                 None => return None
@@ -538,7 +587,13 @@ fn resolve_value_with_functions(
             Some(expr) =>
               match
                 resolve_value_with_functions(
-                  expr, bindings, functions, line, column, errors, call_stack~,
+                  expr,
+                  bindings,
+                  functions,
+                  line,
+                  column,
+                  errors,
+                  call_stack~,
                 ) {
                 Some(v) => Some(v)
                 None => return None
@@ -549,7 +604,13 @@ fn resolve_value_with_functions(
             Some(expr) =>
               match
                 resolve_value_with_functions(
-                  expr, bindings, functions, line, column, errors, call_stack~,
+                  expr,
+                  bindings,
+                  functions,
+                  line,
+                  column,
+                  errors,
+                  call_stack~,
                 ) {
                 Some(v) => Some(v)
                 None => return None
@@ -566,12 +627,24 @@ fn resolve_value_with_functions(
     Index(target, index) =>
       match
         resolve_value_with_functions(
-          target, bindings, functions, line, column, errors, call_stack~,
+          target,
+          bindings,
+          functions,
+          line,
+          column,
+          errors,
+          call_stack~,
         ) {
         Some(resolved_target) =>
           match
             resolve_value_with_functions(
-              index, bindings, functions, line, column, errors, call_stack~,
+              index,
+              bindings,
+              functions,
+              line,
+              column,
+              errors,
+              call_stack~,
             ) {
             Some(resolved_index) =>
               resolve_index(
@@ -584,7 +657,13 @@ fn resolve_value_with_functions(
     Neg(expr) =>
       match
         resolve_value_with_functions(
-          expr, bindings, functions, line, column, errors, call_stack~,
+          expr,
+          bindings,
+          functions,
+          line,
+          column,
+          errors,
+          call_stack~,
         ) {
         Some(resolved) => resolve_neg(resolved, line, column, errors)
         None => None
@@ -592,17 +671,33 @@ fn resolve_value_with_functions(
     IfExpr(cond, then_value, else_value) =>
       match
         resolve_value_with_functions(
-          cond, bindings, functions, line, column, errors, call_stack~,
+          cond,
+          bindings,
+          functions,
+          line,
+          column,
+          errors,
+          call_stack~,
         ) {
         Some(cond_value) =>
           if value_truthy(cond_value) {
             resolve_value_with_functions(
-              then_value, bindings, functions, line, column, errors,
+              then_value,
+              bindings,
+              functions,
+              line,
+              column,
+              errors,
               call_stack~,
             )
           } else {
             resolve_value_with_functions(
-              else_value, bindings, functions, line, column, errors,
+              else_value,
+              bindings,
+              functions,
+              line,
+              column,
+              errors,
               call_stack~,
             )
           }
@@ -611,12 +706,24 @@ fn resolve_value_with_functions(
     Lt(left, right) =>
       match
         resolve_value_with_functions(
-          left, bindings, functions, line, column, errors, call_stack~,
+          left,
+          bindings,
+          functions,
+          line,
+          column,
+          errors,
+          call_stack~,
         ) {
         Some(resolved_left) =>
           match
             resolve_value_with_functions(
-              right, bindings, functions, line, column, errors, call_stack~,
+              right,
+              bindings,
+              functions,
+              line,
+              column,
+              errors,
+              call_stack~,
             ) {
             Some(resolved_right) =>
               resolve_order_compare(
@@ -629,12 +736,24 @@ fn resolve_value_with_functions(
     Lte(left, right) =>
       match
         resolve_value_with_functions(
-          left, bindings, functions, line, column, errors, call_stack~,
+          left,
+          bindings,
+          functions,
+          line,
+          column,
+          errors,
+          call_stack~,
         ) {
         Some(resolved_left) =>
           match
             resolve_value_with_functions(
-              right, bindings, functions, line, column, errors, call_stack~,
+              right,
+              bindings,
+              functions,
+              line,
+              column,
+              errors,
+              call_stack~,
             ) {
             Some(resolved_right) =>
               resolve_order_compare(
@@ -647,12 +766,24 @@ fn resolve_value_with_functions(
     Gt(left, right) =>
       match
         resolve_value_with_functions(
-          left, bindings, functions, line, column, errors, call_stack~,
+          left,
+          bindings,
+          functions,
+          line,
+          column,
+          errors,
+          call_stack~,
         ) {
         Some(resolved_left) =>
           match
             resolve_value_with_functions(
-              right, bindings, functions, line, column, errors, call_stack~,
+              right,
+              bindings,
+              functions,
+              line,
+              column,
+              errors,
+              call_stack~,
             ) {
             Some(resolved_right) =>
               resolve_order_compare(
@@ -665,12 +796,24 @@ fn resolve_value_with_functions(
     Gte(left, right) =>
       match
         resolve_value_with_functions(
-          left, bindings, functions, line, column, errors, call_stack~,
+          left,
+          bindings,
+          functions,
+          line,
+          column,
+          errors,
+          call_stack~,
         ) {
         Some(resolved_left) =>
           match
             resolve_value_with_functions(
-              right, bindings, functions, line, column, errors, call_stack~,
+              right,
+              bindings,
+              functions,
+              line,
+              column,
+              errors,
+              call_stack~,
             ) {
             Some(resolved_right) =>
               resolve_order_compare(
@@ -683,12 +826,24 @@ fn resolve_value_with_functions(
     In(left, right) =>
       match
         resolve_value_with_functions(
-          left, bindings, functions, line, column, errors, call_stack~,
+          left,
+          bindings,
+          functions,
+          line,
+          column,
+          errors,
+          call_stack~,
         ) {
         Some(resolved_left) =>
           match
             resolve_value_with_functions(
-              right, bindings, functions, line, column, errors, call_stack~,
+              right,
+              bindings,
+              functions,
+              line,
+              column,
+              errors,
+              call_stack~,
             ) {
             Some(resolved_right) =>
               resolve_in_membership(
@@ -701,12 +856,24 @@ fn resolve_value_with_functions(
     NotIn(left, right) =>
       match
         resolve_value_with_functions(
-          left, bindings, functions, line, column, errors, call_stack~,
+          left,
+          bindings,
+          functions,
+          line,
+          column,
+          errors,
+          call_stack~,
         ) {
         Some(resolved_left) =>
           match
             resolve_value_with_functions(
-              right, bindings, functions, line, column, errors, call_stack~,
+              right,
+              bindings,
+              functions,
+              line,
+              column,
+              errors,
+              call_stack~,
             ) {
             Some(resolved_right) =>
               match
@@ -724,7 +891,13 @@ fn resolve_value_with_functions(
     Not(expr) =>
       match
         resolve_value_with_functions(
-          expr, bindings, functions, line, column, errors, call_stack~,
+          expr,
+          bindings,
+          functions,
+          line,
+          column,
+          errors,
+          call_stack~,
         ) {
         Some(resolved) => Some(Bool(not(value_truthy(resolved))))
         None => None
@@ -732,12 +905,24 @@ fn resolve_value_with_functions(
     And(left, right) =>
       match
         resolve_value_with_functions(
-          left, bindings, functions, line, column, errors, call_stack~,
+          left,
+          bindings,
+          functions,
+          line,
+          column,
+          errors,
+          call_stack~,
         ) {
         Some(resolved_left) =>
           if value_truthy(resolved_left) {
             resolve_value_with_functions(
-              right, bindings, functions, line, column, errors, call_stack~,
+              right,
+              bindings,
+              functions,
+              line,
+              column,
+              errors,
+              call_stack~,
             )
           } else {
             Some(resolved_left)
@@ -747,14 +932,26 @@ fn resolve_value_with_functions(
     Or(left, right) =>
       match
         resolve_value_with_functions(
-          left, bindings, functions, line, column, errors, call_stack~,
+          left,
+          bindings,
+          functions,
+          line,
+          column,
+          errors,
+          call_stack~,
         ) {
         Some(resolved_left) =>
           if value_truthy(resolved_left) {
             Some(resolved_left)
           } else {
             resolve_value_with_functions(
-              right, bindings, functions, line, column, errors, call_stack~,
+              right,
+              bindings,
+              functions,
+              line,
+              column,
+              errors,
+              call_stack~,
             )
           }
         None => None
@@ -762,12 +959,24 @@ fn resolve_value_with_functions(
     Eq(left, right) =>
       match
         resolve_value_with_functions(
-          left, bindings, functions, line, column, errors, call_stack~,
+          left,
+          bindings,
+          functions,
+          line,
+          column,
+          errors,
+          call_stack~,
         ) {
         Some(resolved_left) =>
           match
             resolve_value_with_functions(
-              right, bindings, functions, line, column, errors, call_stack~,
+              right,
+              bindings,
+              functions,
+              line,
+              column,
+              errors,
+              call_stack~,
             ) {
             Some(resolved_right) =>
               Some(Bool(value_equals(resolved_left, resolved_right)))
@@ -778,12 +987,24 @@ fn resolve_value_with_functions(
     NotEq(left, right) =>
       match
         resolve_value_with_functions(
-          left, bindings, functions, line, column, errors, call_stack~,
+          left,
+          bindings,
+          functions,
+          line,
+          column,
+          errors,
+          call_stack~,
         ) {
         Some(resolved_left) =>
           match
             resolve_value_with_functions(
-              right, bindings, functions, line, column, errors, call_stack~,
+              right,
+              bindings,
+              functions,
+              line,
+              column,
+              errors,
+              call_stack~,
             ) {
             Some(resolved_right) =>
               Some(Bool(not(value_equals(resolved_left, resolved_right))))
@@ -794,12 +1015,24 @@ fn resolve_value_with_functions(
     Add(left, right) =>
       match
         resolve_value_with_functions(
-          left, bindings, functions, line, column, errors, call_stack~,
+          left,
+          bindings,
+          functions,
+          line,
+          column,
+          errors,
+          call_stack~,
         ) {
         Some(resolved_left) =>
           match
             resolve_value_with_functions(
-              right, bindings, functions, line, column, errors, call_stack~,
+              right,
+              bindings,
+              functions,
+              line,
+              column,
+              errors,
+              call_stack~,
             ) {
             Some(resolved_right) =>
               resolve_add(resolved_left, resolved_right, line, column, errors)
@@ -810,12 +1043,24 @@ fn resolve_value_with_functions(
     Sub(left, right) =>
       match
         resolve_value_with_functions(
-          left, bindings, functions, line, column, errors, call_stack~,
+          left,
+          bindings,
+          functions,
+          line,
+          column,
+          errors,
+          call_stack~,
         ) {
         Some(resolved_left) =>
           match
             resolve_value_with_functions(
-              right, bindings, functions, line, column, errors, call_stack~,
+              right,
+              bindings,
+              functions,
+              line,
+              column,
+              errors,
+              call_stack~,
             ) {
             Some(resolved_right) =>
               resolve_sub(resolved_left, resolved_right, line, column, errors)
@@ -826,12 +1071,24 @@ fn resolve_value_with_functions(
     Mul(left, right) =>
       match
         resolve_value_with_functions(
-          left, bindings, functions, line, column, errors, call_stack~,
+          left,
+          bindings,
+          functions,
+          line,
+          column,
+          errors,
+          call_stack~,
         ) {
         Some(resolved_left) =>
           match
             resolve_value_with_functions(
-              right, bindings, functions, line, column, errors, call_stack~,
+              right,
+              bindings,
+              functions,
+              line,
+              column,
+              errors,
+              call_stack~,
             ) {
             Some(resolved_right) =>
               resolve_mul(resolved_left, resolved_right, line, column, errors)
@@ -842,12 +1099,24 @@ fn resolve_value_with_functions(
     FloorDiv(left, right) =>
       match
         resolve_value_with_functions(
-          left, bindings, functions, line, column, errors, call_stack~,
+          left,
+          bindings,
+          functions,
+          line,
+          column,
+          errors,
+          call_stack~,
         ) {
         Some(resolved_left) =>
           match
             resolve_value_with_functions(
-              right, bindings, functions, line, column, errors, call_stack~,
+              right,
+              bindings,
+              functions,
+              line,
+              column,
+              errors,
+              call_stack~,
             ) {
             Some(resolved_right) =>
               resolve_floor_div(
@@ -860,12 +1129,24 @@ fn resolve_value_with_functions(
     Mod(left, right) =>
       match
         resolve_value_with_functions(
-          left, bindings, functions, line, column, errors, call_stack~,
+          left,
+          bindings,
+          functions,
+          line,
+          column,
+          errors,
+          call_stack~,
         ) {
         Some(resolved_left) =>
           match
             resolve_value_with_functions(
-              right, bindings, functions, line, column, errors, call_stack~,
+              right,
+              bindings,
+              functions,
+              line,
+              column,
+              errors,
+              call_stack~,
             ) {
             Some(resolved_right) =>
               resolve_mod(resolved_left, resolved_right, line, column, errors)
@@ -877,11 +1158,21 @@ fn resolve_value_with_functions(
       match bindings.get(name) {
         Some(bound) =>
           resolve_value_with_functions(
-            bound, bindings, functions, line, column, errors, call_stack~,
+            bound,
+            bindings,
+            functions,
+            line,
+            column,
+            errors,
+            call_stack~,
           )
         None => {
           semantic_error_with_stack(
-            errors, line, column, "unknown variable '\{name}'", call_stack,
+            errors,
+            line,
+            column,
+            "unknown variable '\{name}'",
+            call_stack,
           )
           None
         }
@@ -891,7 +1182,13 @@ fn resolve_value_with_functions(
       for item in values {
         match
           resolve_value_with_functions(
-            item, bindings, functions, line, column, errors, call_stack~,
+            item,
+            bindings,
+            functions,
+            line,
+            column,
+            errors,
+            call_stack~,
           ) {
           Some(value) => resolved.push(value)
           None => return None
@@ -904,7 +1201,13 @@ fn resolve_value_with_functions(
       for key, item in values {
         match
           resolve_value_with_functions(
-            item, bindings, functions, line, column, errors, call_stack~,
+            item,
+            bindings,
+            functions,
+            line,
+            column,
+            errors,
+            call_stack~,
           ) {
           Some(value) => resolved[key] = value
           None => return None

@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.3.0] - 2026-02-12
+
+### Added
+
+- Starlark slice step syntax support (e.g. `xs[a:b:c]`).
+- Dependency analysis example workflow and sample monorepo under `examples/dependency-analysis`.
+- Fixture coverage for workflow execution and invalid execution cases.
+- `src/examples` package with runnable example entry and tests.
+
+### Changed
+
+- Refactored Starlark parser/semantics/loader/builtins into dedicated `src/starlark` package.
+- Workflow package now uses the extracted Starlark package wiring.
+
 ## [0.2.0] - 2026-02-12
 
 ### Added
