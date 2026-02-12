@@ -99,6 +99,77 @@ test "workflow adapter: fs-backed starlark run and report write" {
 }
 
 ///|
+test "workflow adapter: fs-backed starlark parse accepts external inputs" {
+  let src =
+    #|var(name="profile", type="string", required=True, default="dev")
+    #|workflow(name=profile)
+    #|node(id="root", depends_on=[])
+    #|task(id="root:build", node="root", cmd=["echo", profile], needs=[])
+    #|entrypoint(targets=["root:build"])
+  let adapter = WorkflowAdapter::new(
+    FsAdapter::memory_with({ "workflow.star": src }),
+    CommandAdapter::none(),
+  )
+  let parsed = parse_starlark_subset_from_fs_with_inputs(
+    "workflow.star",
+    adapter,
+    { "profile": "prod" },
+  )
+  assert_eq(parsed.errors.length(), 0)
+  assert_eq(parsed.ir.name, "prod")
+  assert_eq(parsed.ir.tasks.length(), 1)
+  assert_eq(parsed.ir.tasks[0].cmd, "echo prod")
+}
+
+///|
+test "workflow adapter: fs-backed starlark execute accepts external inputs" {
+  let src =
+    #|var(name="profile", type="string", required=True, default="dev")
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[])
+    #|task(id="root:build", node="root", cmd=["echo", profile], needs=[])
+    #|entrypoint(targets=["root:build"])
+  let adapter = WorkflowAdapter::new(
+    FsAdapter::memory_with({ "workflow.star": src }),
+    CommandAdapter::new(fn(cmd : String, _cwd : String?) {
+      command_success(stdout="ran:" + cmd)
+    }),
+  )
+  let result = execute_starlark_subset_from_fs_with_inputs(
+    "workflow.star",
+    adapter,
+    { "profile": "prod" },
+  )
+  assert_eq(result.ok, true)
+  assert_eq(result.state, "completed")
+  assert_eq(result.steps.length(), 1)
+  assert_eq(result.steps[0].message, "ran:echo prod")
+}
+
+///|
+test "workflow adapter: fs-backed starlark parse accepts cli and env inputs" {
+  let src =
+    #|var(name="profile", type="string", required=True, default="dev")
+    #|workflow(name=profile)
+    #|node(id="root", depends_on=[])
+    #|task(id="root:build", node="root", cmd=["echo", profile], needs=[])
+    #|entrypoint(targets=["root:build"])
+  let adapter = WorkflowAdapter::new(
+    FsAdapter::memory_with({ "workflow.star": src }),
+    CommandAdapter::none(),
+  )
+  let parsed = parse_starlark_subset_from_fs_with_cli_env(
+    "workflow.star",
+    adapter,
+    ["--var=profile=prod"],
+    { "BITFLOW_VAR_profile": "dev" },
+  )
+  assert_eq(parsed.errors.length(), 0)
+  assert_eq(parsed.ir.name, "prod")
+  assert_eq(parsed.ir.tasks[0].cmd, "echo prod")
+}
+
+///|
 test "workflow adapter: missing starlark file becomes invalid result" {
   let adapter = WorkflowAdapter::none()
   let parsed = parse_starlark_subset_from_fs("missing.star", adapter)
@@ -187,4 +258,24 @@ test "workflow adapter: starlark load() reports missing file" {
   let text = parsed.errors.join("\n")
   assert_true(text.contains("failed to read loaded file"))
   assert_true(text.contains("defs/missing.star"))
+}
+
+///|
+test "workflow adapter: starlark load() validates unknown arg via builtin schema" {
+  let root_src =
+    #|load(src="defs/common.star")
+    #|workflow(name="ci")
+  let common_src =
+    #|node(id="dep", depends_on=[])
+  let adapter = WorkflowAdapter::new(
+    FsAdapter::memory_with({
+      "workflow.star": root_src,
+      "defs/common.star": common_src,
+    }),
+    CommandAdapter::none(),
+  )
+  let parsed = parse_starlark_subset_from_fs("workflow.star", adapter)
+  let text = parsed.errors.join("\n")
+  assert_true(text.contains("unknown argument 'src' for load"))
+  assert_true(text.contains("load.path is required"))
 }

@@ -1,5 +1,7 @@
 import {
-  "mizchi/bitflow" @lib,
+  "mizchi/bitflow/workflow" @wf,
+  "moonbitlang/x/fs" @xfs,
+  "moonbitlang/x/sys" @xsys,
 }
 
 options(

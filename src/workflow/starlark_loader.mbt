@@ -59,38 +59,9 @@ fn starlark_load_path_from_call(
   call : StarlarkCall,
   errors : Array[String],
 ) -> String? {
-  if call.args.length() == 0 {
-    starlark_semantic_error(
-      errors,
-      call.line,
-      call.column,
-      "load.path is required",
-    )
-    return None
-  }
-  let mut path_arg : StarlarkArg? = None
-  for arg in call.args {
-    if arg.name != "path" {
-      starlark_semantic_error(
-        errors,
-        arg.line,
-        arg.column,
-        "load() only accepts path argument",
-      )
-      continue
-    }
-    if path_arg is Some(_) {
-      starlark_semantic_error(
-        errors,
-        arg.line,
-        arg.column,
-        "duplicate argument 'path'",
-      )
-    } else {
-      path_arg = Some(arg)
-    }
-  }
-  guard path_arg is Some(target) else { return None }
+  let args = starlark_arg_map(call, errors)
+  starlark_validate_call_shape(call, args, errors)
+  guard args.get("path") is Some(target) else { return None }
   match target.value {
     Str(path) => Some(path)
     _ => {
@@ -166,6 +137,15 @@ fn parse_starlark_subset_from_fs_impl(
   path : String,
   adapter : WorkflowAdapter,
 ) -> StarlarkParseResult {
+  parse_starlark_subset_from_fs_with_inputs_impl(path, adapter, {})
+}
+
+///|
+fn parse_starlark_subset_from_fs_with_inputs_impl(
+  path : String,
+  adapter : WorkflowAdapter,
+  external_inputs : Map[String, String],
+) -> StarlarkParseResult {
   let normalized = starlark_path_normalize(path)
   if (adapter.fs.exists)(normalized) == false {
     return {
@@ -182,5 +162,5 @@ fn parse_starlark_subset_from_fs_impl(
   starlark_collect_calls_from_fs(
     normalized, adapter, calls, load_errors, visiting, loaded, stack,
   )
-  parse_starlark_calls_impl(calls, load_errors)
+  parse_starlark_calls_impl(calls, load_errors, external_inputs)
 }

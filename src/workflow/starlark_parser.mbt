@@ -4,6 +4,8 @@ priv enum StarlarkValue {
   Num(Int)
   Bool(Bool)
   List(Array[StarlarkValue])
+  Dict(Map[String, StarlarkValue])
+  Ref(String)
 }
 
 ///|
@@ -266,7 +268,7 @@ fn StarlarkParser::parse_int(self : StarlarkParser) -> StarlarkValue? {
 ///|
 fn StarlarkParser::recover_to_arg_boundary(self : StarlarkParser) -> Unit {
   while self.peek() is Some(ch) {
-    if ch == ',' || ch == ')' || ch == ']' {
+    if ch == ',' || ch == ')' || ch == ']' || ch == '}' {
       break
     }
     self.advance() |> ignore
@@ -324,17 +326,93 @@ fn StarlarkParser::parse_list(self : StarlarkParser) -> StarlarkValue? {
 }
 
 ///|
-fn StarlarkParser::parse_identifier_value(
-  self : StarlarkParser,
-  ident : String,
-) -> StarlarkValue? {
+fn StarlarkParser::parse_dict(self : StarlarkParser) -> StarlarkValue? {
+  guard self.consume_char('{') else {
+    self.push_error("expected '{'")
+    return None
+  }
+  let items : Map[String, StarlarkValue] = {}
+  self.skip_value_space()
+  if self.consume_char('}') {
+    return Some(Dict(items))
+  }
+  while true {
+    self.skip_value_space()
+    let key = match self.parse_string() {
+      Some(Str(text)) => text
+      _ => {
+        self.push_error("dict key must be string")
+        self.recover_to_arg_boundary()
+        if self.consume_char('}') {
+          break
+        }
+        if self.consume_char(',') {
+          continue
+        }
+        break
+      }
+    }
+
+    self.skip_value_space()
+    if not(self.consume_char(':')) {
+      self.push_error("expected ':' after dict key")
+      self.recover_to_arg_boundary()
+      if self.consume_char('}') {
+        break
+      }
+      if self.consume_char(',') {
+        continue
+      }
+      break
+    }
+
+    self.skip_value_space()
+    match self.parse_value() {
+      Some(value) => items[key] = value
+      None => {
+        self.recover_to_arg_boundary()
+        if self.consume_char('}') {
+          break
+        }
+        if self.consume_char(',') {
+          continue
+        }
+        break
+      }
+    }
+
+    self.skip_value_space()
+    if self.consume_char(',') {
+      self.skip_value_space()
+      if self.consume_char('}') {
+        break
+      }
+      continue
+    }
+    if self.consume_char('}') {
+      break
+    }
+    self.push_error("expected ',' or '}' in dict literal")
+    self.recover_to_arg_boundary()
+    if self.consume_char('}') {
+      break
+    }
+    if self.consume_char(',') {
+      continue
+    }
+    break
+  }
+  Some(Dict(items))
+}
+
+///|
+fn starlark_parse_identifier_value(ident : String) -> StarlarkValue? {
   if ident == "True" || ident == "true" {
     Some(Bool(true))
   } else if ident == "False" || ident == "false" {
     Some(Bool(false))
   } else {
-    self.push_error("unsupported value identifier '\{ident}'")
-    None
+    Some(Ref(ident))
   }
 }
 
@@ -351,6 +429,9 @@ fn StarlarkParser::parse_value(self : StarlarkParser) -> StarlarkValue? {
   if ch == '[' {
     return self.parse_list()
   }
+  if ch == '{' {
+    return self.parse_dict()
+  }
   if ch == '-' || starlark_is_digit(ch) {
     return self.parse_int()
   }
@@ -359,21 +440,19 @@ fn StarlarkParser::parse_value(self : StarlarkParser) -> StarlarkValue? {
       self.push_error("expected value")
       return None
     }
-    return self.parse_identifier_value(ident)
+    return starlark_parse_identifier_value(ident)
   }
   self.push_error("unexpected token while parsing value")
   None
 }
 
 ///|
-fn StarlarkParser::parse_call(self : StarlarkParser) -> StarlarkCall? {
-  let start_line = self.line
-  let start_col = self.column
-  guard self.parse_identifier() is Some(name) else {
-    self.push_error("expected statement name")
-    return None
-  }
-  self.skip_inline_space()
+fn StarlarkParser::parse_call_with_name(
+  self : StarlarkParser,
+  name : String,
+  start_line : Int,
+  start_col : Int,
+) -> StarlarkCall? {
   guard self.consume_char('(') else {
     self.push_error("expected '(' after statement name")
     return None
@@ -489,6 +568,42 @@ fn StarlarkParser::parse_call(self : StarlarkParser) -> StarlarkCall? {
 }
 
 ///|
+fn StarlarkParser::parse_assignment_with_name(
+  self : StarlarkParser,
+  name : String,
+  start_line : Int,
+  start_col : Int,
+) -> StarlarkCall {
+  let args : Array[StarlarkArg] = [
+    { name: "name", value: Str(name), line: start_line, column: start_col },
+  ]
+  self.skip_value_space()
+  let value_line = self.line
+  let value_col = self.column
+  match self.parse_value() {
+    Some(value) =>
+      args.push({ name: "value", value, line: value_line, column: value_col })
+    None => ()
+  }
+  { name: "__assign__", args, line: start_line, column: start_col }
+}
+
+///|
+fn StarlarkParser::parse_statement(self : StarlarkParser) -> StarlarkCall? {
+  let start_line = self.line
+  let start_col = self.column
+  guard self.parse_identifier() is Some(name) else {
+    self.push_error("expected statement name")
+    return None
+  }
+  self.skip_inline_space()
+  if self.consume_char('=') {
+    return Some(self.parse_assignment_with_name(name, start_line, start_col))
+  }
+  self.parse_call_with_name(name, start_line, start_col)
+}
+
+///|
 fn StarlarkParser::recover_to_statement_boundary(self : StarlarkParser) -> Unit {
   while self.peek() is Some(ch) {
     if ch == '\n' || ch == ';' {
@@ -530,7 +645,7 @@ fn parse_starlark_syntax(text : String) -> StarlarkSyntaxResult {
   let calls : Array[StarlarkCall] = []
   parser.skip_statement_separators()
   while parser.peek() is Some(_) {
-    match parser.parse_call() {
+    match parser.parse_statement() {
       Some(call) => calls.push(call)
       None => parser.recover_to_statement_boundary()
     }

@@ -5,6 +5,11 @@ pub struct FlowTask {
   cmd : String
   needs : Array[String]
   required : Bool
+  srcs : Array[String]
+  outs : Array[String]
+  env : Map[String, String]
+  cwd : String
+  trigger_mode : String
 }
 
 ///|
@@ -40,14 +45,124 @@ pub struct StarlarkParseResult {
 }
 
 ///|
+pub struct ExternalInputParseResult {
+  values : Map[String, String]
+  errors : Array[String]
+}
+
+///|
+fn parse_external_input_assignment(
+  raw : String,
+  source : String,
+  errors : Array[String],
+) -> (String, String)? {
+  guard raw.find("=") is Some(eq_idx) else {
+    errors.push(source + " must be key=value")
+    return None
+  }
+  let name = String::unsafe_substring(raw, start=0, end=eq_idx)
+  if name.length() == 0 {
+    errors.push(source + " key is empty")
+    return None
+  }
+  let value = String::unsafe_substring(raw, start=eq_idx + 1, end=raw.length())
+  Some((name, value))
+}
+
+///|
+pub fn parse_external_inputs(
+  cli_args : Array[String],
+  env : Map[String, String],
+  cli_flag? : String = "--var",
+  env_prefix? : String = "BITFLOW_VAR_",
+) -> ExternalInputParseResult {
+  let values : Map[String, String] = {}
+  let errors : Array[String] = []
+
+  for key, value in env {
+    if not(key.has_prefix(env_prefix)) {
+      continue
+    }
+    let name = String::unsafe_substring(
+      key,
+      start=env_prefix.length(),
+      end=key.length(),
+    )
+    if name.length() == 0 {
+      errors.push("env var key is empty for prefix '\{env_prefix}'")
+      continue
+    }
+    values[name] = value
+  }
+
+  let flag_with_equal = cli_flag + "="
+  let mut idx = 0
+  while idx < cli_args.length() {
+    let arg = cli_args[idx]
+    if arg == cli_flag {
+      if idx + 1 >= cli_args.length() {
+        errors.push("cli flag '\{cli_flag}' expects key=value")
+        idx += 1
+        continue
+      }
+      let raw = cli_args[idx + 1]
+      match parse_external_input_assignment(raw, "cli arg '\{raw}'", errors) {
+        Some((name, value)) => values[name] = value
+        None => ()
+      }
+      idx += 2
+      continue
+    }
+    if arg.has_prefix(flag_with_equal) {
+      let raw = String::unsafe_substring(
+        arg,
+        start=flag_with_equal.length(),
+        end=arg.length(),
+      )
+      match parse_external_input_assignment(raw, "cli arg '\{arg}'", errors) {
+        Some((name, value)) => values[name] = value
+        None => ()
+      }
+      idx += 1
+      continue
+    }
+    idx += 1
+  }
+  { values, errors }
+}
+
+///|
+fn merge_parse_errors(
+  parsed : StarlarkParseResult,
+  prepended_errors : Array[String],
+) -> StarlarkParseResult {
+  if prepended_errors.length() == 0 {
+    return parsed
+  }
+  let errors : Array[String] = []
+  for err in prepended_errors {
+    errors.push(err)
+  }
+  for err in parsed.errors {
+    errors.push(err)
+  }
+  { ir: parsed.ir, errors }
+}
+
+///|
 pub fn new_task(
   id : String,
   node : String,
   cmd : String,
   needs : Array[String],
   required? : Bool = true,
+  srcs? : Array[String] = [],
+  outs? : Array[String] = [],
+  env? : Map[String, String] = {},
+  cwd? : String = "",
+  trigger_mode? : String = "auto",
 ) -> FlowTask {
-  { id, node, cmd, needs, required }
+  { id, node, cmd, needs, required, srcs, outs, env, cwd, trigger_mode }
 }
 
 ///|
@@ -111,6 +226,85 @@ fn selected_task_set(ir : FlowIr) -> Map[String, Bool] {
 }
 
 ///|
+fn is_valid_trigger_mode(mode : String) -> Bool {
+  mode == "auto" || mode == "manual"
+}
+
+///|
+fn wildcard_match(pattern : String, text : String) -> Bool {
+  let mut p = 0
+  let mut t = 0
+  let mut star = -1
+  let mut mark = 0
+  while t < text.length() {
+    if p < pattern.length() {
+      let pc = pattern.unsafe_get(p)
+      let tc = text.unsafe_get(t)
+      if pc == '*' {
+        star = p
+        p += 1
+        mark = t
+        continue
+      }
+      if pc == tc {
+        p += 1
+        t += 1
+        continue
+      }
+    }
+    if star >= 0 {
+      p = star + 1
+      mark += 1
+      t = mark
+    } else {
+      return false
+    }
+  }
+  while p < pattern.length() && pattern.unsafe_get(p) == '*' {
+    p += 1
+  }
+  p == pattern.length()
+}
+
+///|
+fn task_matches_changed_paths(
+  task : FlowTask,
+  changed_paths : Array[String],
+) -> Bool {
+  if task.srcs.length() == 0 {
+    return false
+  }
+  for src in task.srcs {
+    for path in changed_paths {
+      if wildcard_match(src, path) {
+        return true
+      }
+    }
+  }
+  false
+}
+
+///|
+pub fn entry_targets_for_changed_paths(
+  ir : FlowIr,
+  changed_paths : Array[String],
+) -> Array[String] {
+  let targets : Array[String] = []
+  if changed_paths.length() == 0 {
+    return targets
+  }
+  for task in ir.tasks {
+    if task.trigger_mode != "auto" {
+      continue
+    }
+    if task_matches_changed_paths(task, changed_paths) {
+      targets.push(task.id)
+    }
+  }
+  targets
+}
+
+///|
 pub fn ir_issues(ir : FlowIr) -> Array[String] {
   let issues : Array[String] = []
   for issue in graph_issues(ir.nodes) {
@@ -128,6 +322,11 @@ pub fn ir_issues(ir : FlowIr) -> Array[String] {
     }
     if known_node_ids.get(task.node) is None {
       issues.push("task '\{task.id}' targets unknown node '\{task.node}'")
+    }
+    if not(is_valid_trigger_mode(task.trigger_mode)) {
+      issues.push(
+        "task '\{task.id}' has invalid trigger_mode '\{task.trigger_mode}'",
+      )
     }
   }
   let known_task_ids = task_node_map(ir.tasks)
@@ -235,8 +434,54 @@ pub fn execute_ir(
 }
 
 ///|
+pub fn execute_ir_for_changed_paths(
+  ir : FlowIr,
+  changed_paths : Array[String],
+  run_task : (FlowTask) -> (Bool, String),
+) -> FlowExecutionResult {
+  let targets = entry_targets_for_changed_paths(ir, changed_paths)
+  if targets.length() == 0 {
+    return { ok: true, state: "completed", order: [], steps: [], issues: [] }
+  }
+  let scoped = new_ir(
+    ir.name,
+    ir.nodes,
+    ir.tasks,
+    entry_targets=targets,
+    max_parallel=ir.max_parallel,
+  )
+  execute_ir(scoped, run_task)
+}
+
+///|
 pub fn parse_starlark_subset(text : String) -> StarlarkParseResult {
   parse_starlark_subset_impl(text)
+}
+
+///|
+pub fn parse_starlark_subset_with_inputs(
+  text : String,
+  external_inputs : Map[String, String],
+) -> StarlarkParseResult {
+  parse_starlark_subset_with_inputs_impl(text, external_inputs)
+}
+
+///|
+pub fn parse_starlark_subset_with_cli_env(
+  text : String,
+  cli_args : Array[String],
+  env : Map[String, String],
+  cli_flag? : String = "--var",
+  env_prefix? : String = "BITFLOW_VAR_",
+) -> StarlarkParseResult {
+  let input_result = parse_external_inputs(
+    cli_args,
+    env,
+    cli_flag~,
+    env_prefix~,
+  )
+  let parsed = parse_starlark_subset_with_inputs(text, input_result.values)
+  merge_parse_errors(parsed, input_result.errors)
 }
 
 ///|
@@ -245,6 +490,53 @@ pub fn execute_starlark_subset(
   run_task : (FlowTask) -> (Bool, String),
 ) -> FlowExecutionResult {
   let parsed = parse_starlark_subset(text)
+  if parsed.errors.length() > 0 {
+    return {
+      ok: false,
+      state: "invalid",
+      order: [],
+      steps: [],
+      issues: parsed.errors,
+    }
+  }
+  execute_ir(parsed.ir, run_task)
+}
+
+///|
+pub fn execute_starlark_subset_with_inputs(
+  text : String,
+  external_inputs : Map[String, String],
+  run_task : (FlowTask) -> (Bool, String),
+) -> FlowExecutionResult {
+  let parsed = parse_starlark_subset_with_inputs(text, external_inputs)
+  if parsed.errors.length() > 0 {
+    return {
+      ok: false,
+      state: "invalid",
+      order: [],
+      steps: [],
+      issues: parsed.errors,
+    }
+  }
+  execute_ir(parsed.ir, run_task)
+}
+
+///|
+pub fn execute_starlark_subset_with_cli_env(
+  text : String,
+  cli_args : Array[String],
+  env : Map[String, String],
+  run_task : (FlowTask) -> (Bool, String),
+  cli_flag? : String = "--var",
+  env_prefix? : String = "BITFLOW_VAR_",
+) -> FlowExecutionResult {
+  let parsed = parse_starlark_subset_with_cli_env(
+    text,
+    cli_args,
+    env,
+    cli_flag~,
+    env_prefix~,
+  )
   if parsed.errors.length() > 0 {
     return {
       ok: false,
@@ -274,7 +566,8 @@ pub fn execute_ir_with_adapter(
   adapter : WorkflowAdapter,
 ) -> FlowExecutionResult {
   execute_ir(ir, fn(task : FlowTask) {
-    let result = (adapter.cmd.run)(task.cmd, None)
+    let cwd = if task.cwd.length() == 0 { None } else { Some(task.cwd) }
+    let result = (adapter.cmd.run)(task.cmd, cwd)
     (result.ok(), command_result_message(result))
   })
 }
@@ -288,11 +581,93 @@ pub fn parse_starlark_subset_from_fs(
 }
 
 ///|
+pub fn parse_starlark_subset_from_fs_with_inputs(
+  path : String,
+  adapter : WorkflowAdapter,
+  external_inputs : Map[String, String],
+) -> StarlarkParseResult {
+  parse_starlark_subset_from_fs_with_inputs_impl(path, adapter, external_inputs)
+}
+
+///|
+pub fn parse_starlark_subset_from_fs_with_cli_env(
+  path : String,
+  adapter : WorkflowAdapter,
+  cli_args : Array[String],
+  env : Map[String, String],
+  cli_flag? : String = "--var",
+  env_prefix? : String = "BITFLOW_VAR_",
+) -> StarlarkParseResult {
+  let input_result = parse_external_inputs(
+    cli_args,
+    env,
+    cli_flag~,
+    env_prefix~,
+  )
+  let parsed = parse_starlark_subset_from_fs_with_inputs(
+    path,
+    adapter,
+    input_result.values,
+  )
+  merge_parse_errors(parsed, input_result.errors)
+}
+
+///|
 pub fn execute_starlark_subset_from_fs(
   path : String,
   adapter : WorkflowAdapter,
 ) -> FlowExecutionResult {
   let parsed = parse_starlark_subset_from_fs(path, adapter)
+  if parsed.errors.length() > 0 {
+    return {
+      ok: false,
+      state: "invalid",
+      order: [],
+      steps: [],
+      issues: parsed.errors,
+    }
+  }
+  execute_ir_with_adapter(parsed.ir, adapter)
+}
+
+///|
+pub fn execute_starlark_subset_from_fs_with_inputs(
+  path : String,
+  adapter : WorkflowAdapter,
+  external_inputs : Map[String, String],
+) -> FlowExecutionResult {
+  let parsed = parse_starlark_subset_from_fs_with_inputs(
+    path, adapter, external_inputs,
+  )
+  if parsed.errors.length() > 0 {
+    return {
+      ok: false,
+      state: "invalid",
+      order: [],
+      steps: [],
+      issues: parsed.errors,
+    }
+  }
+  execute_ir_with_adapter(parsed.ir, adapter)
+}
+
+///|
+pub fn execute_starlark_subset_from_fs_with_cli_env(
+  path : String,
+  adapter : WorkflowAdapter,
+  cli_args : Array[String],
+  env : Map[String, String],
+  cli_flag? : String = "--var",
+  env_prefix? : String = "BITFLOW_VAR_",
+) -> FlowExecutionResult {
+  let parsed = parse_starlark_subset_from_fs_with_cli_env(
+    path,
+    adapter,
+    cli_args,
+    env,
+    cli_flag~,
+    env_prefix~,
+  )
   if parsed.errors.length() > 0 {
     return {
       ok: false,

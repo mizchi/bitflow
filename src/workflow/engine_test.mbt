@@ -4,21 +4,81 @@ fn run_ok(_task : FlowTask) -> (Bool, String) {
 }
 
 ///|
-fn run_fail(task : FlowTask) -> (Bool, String) {
-  if task.id == "dep:test" {
-    (false, "dep failed")
-  } else {
-    (true, "")
+struct TaskScenario {
+  task_id : String
+  ok : Bool
+  message : String
+}
+
+///|
+fn task_scenario_success(
+  task_id : String,
+  message? : String = "",
+) -> TaskScenario {
+  { task_id, ok: true, message }
+}
+
+///|
+fn task_scenario_failure(
+  task_id : String,
+  message? : String = "task failed",
+) -> TaskScenario {
+  { task_id, ok: false, message }
+}
+
+///|
+struct MockTaskRunner {
+  run : (FlowTask) -> (Bool, String)
+  called_ids : () -> Array[String]
+}
+
+///|
+fn mock_task_runner(
+  scenarios : Array[TaskScenario],
+  default_ok? : Bool = true,
+  default_message? : String = "",
+) -> MockTaskRunner {
+  let outcomes : Map[String, (Bool, String)] = {}
+  for scenario in scenarios {
+    outcomes[scenario.task_id] = (scenario.ok, scenario.message)
+  }
+  let called : Array[String] = []
+  {
+    run: fn(task : FlowTask) {
+      called.push(task.id)
+      match outcomes.get(task.id) {
+        Some(result) => result
+        None => (default_ok, default_message)
+      }
+    },
+    called_ids: fn() {
+      let snapshot : Array[String] = []
+      for id in called {
+        snapshot.push(id)
+      }
+      snapshot
+    },
   }
 }
 
 ///|
-fn run_optional_fail(task : FlowTask) -> (Bool, String) {
-  if task.id == "root:lint" {
-    (false, "lint failed")
-  } else {
-    (true, "")
-  }
+test "workflow engine: mock runner can describe task outcomes and execution order" {
+  let runner = mock_task_runner([
+    task_scenario_success("root:build"),
+    task_scenario_failure("dep:test", message="dep failed"),
+  ])
+  let nodes = [new_node("root", []), new_node("dep", ["root"])]
+  let tasks = [
+    new_task("root:build", "root", "build", []),
+    new_task("dep:test", "dep", "test", ["root:build"]),
+  ]
+  let ir = new_ir("ci", nodes, tasks, entry_targets=["dep:test"])
+  let result = execute_ir(ir, runner.run)
+  assert_eq(result.ok, false)
+  assert_eq(result.steps.length(), 2)
+  assert_eq(result.steps[0].status, "success")
+  assert_eq(result.steps[1].status, "failed")
+  assert_eq((runner.called_ids)().join(","), "root:build,dep:test")
 }
 
 ///|
@@ -227,6 +287,9 @@ test "workflow engine: direct API executes topological tasks" {
 
 ///|
 test "workflow engine: required failure blocks dependent task" {
+  let runner = mock_task_runner([
+    task_scenario_failure("dep:test", message="dep failed"),
+  ])
   let nodes = [
     new_node("root", []),
     new_node("dep", ["root"]),
@@ -238,7 +301,7 @@ test "workflow engine: required failure blocks dependent task" {
     new_task("leaf:deploy", "leaf", "deploy", ["dep:test"]),
   ]
   let ir = new_ir("ci", nodes, tasks)
-  let result = execute_ir(ir, run_fail)
+  let result = execute_ir(ir, runner.run)
   assert_eq(result.ok, false)
   assert_eq(result.state, "partial_failed")
   let text = result.steps.map(step => step.id + ":" + step.status).join("\n")
@@ -269,13 +332,16 @@ test "workflow engine: entry target executes only transitive dependencies" {
 
 ///|
 test "workflow engine: optional task failure keeps workflow completed" {
+  let runner = mock_task_runner([
+    task_scenario_failure("root:lint", message="lint failed"),
+  ])
   let nodes = [new_node("root", []), new_node("dep", ["root"])]
   let tasks = [
     new_task("root:lint", "root", "lint", [], required=false),
     new_task("dep:test", "dep", "test", [], required=true),
   ]
   let ir = new_ir("ci", nodes, tasks)
-  let result = execute_ir(ir, run_optional_fail)
+  let result = execute_ir(ir, runner.run)
   assert_eq(result.ok, true)
   assert_eq(result.state, "completed")
   let text = result.steps.map(step => step.id + ":" + step.status).join("\n")
@@ -344,6 +410,387 @@ test "workflow engine: starlark parser supports cmd array and inline comments" {
   let result = execute_ir(parsed.ir, run_ok)
   assert_eq(result.ok, true)
   assert_eq(result.steps.length(), 1)
+}
+
+///|
+test "workflow engine: starlark task supports srcs outs cwd and trigger" {
+  let src =
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[])
+    #|task(
+    #|  id="root:build",
+    #|  node="root",
+    #|  cmd=["pnpm", "build"],
+    #|  needs=[],
+    #|  srcs=["packages/root/**", "pnpm-lock.yaml"],
+    #|  outs=["packages/root/dist/**"],
+    #|  cwd="packages/root",
+    #|  trigger="manual",
+    #|)
+    #|entrypoint(targets=["root:build"])
+  let parsed = parse_starlark_subset(src)
+  assert_eq(parsed.errors.length(), 0)
+  assert_eq(parsed.ir.tasks.length(), 1)
+  let task = parsed.ir.tasks[0]
+  assert_eq(task.srcs.length(), 2)
+  assert_eq(task.srcs[0], "packages/root/**")
+  assert_eq(task.outs.length(), 1)
+  assert_eq(task.outs[0], "packages/root/dist/**")
+  assert_eq(task.cwd, "packages/root")
+  assert_eq(task.trigger_mode, "manual")
+}
+
+///|
+test "workflow engine: starlark target alias maps to task semantics" {
+  let src =
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[])
+    #|target(
+    #|  id="root:build",
+    #|  node="root",
+    #|  cmd=["pnpm", "build"],
+    #|  needs=[],
+    #|  srcs=["packages/root/**"],
+    #|)
+    #|entrypoint(targets=["root:build"])
+  let parsed = parse_starlark_subset(src)
+  assert_eq(parsed.errors.length(), 0)
+  assert_eq(parsed.ir.tasks.length(), 1)
+  let task = parsed.ir.tasks[0]
+  assert_eq(task.id, "root:build")
+  assert_eq(task.cmd, "pnpm build")
+  assert_eq(task.srcs.length(), 1)
+  assert_eq(task.srcs[0], "packages/root/**")
+}
+
+///|
+test "workflow engine: starlark task supports env dict" {
+  let src =
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[])
+    #|task(
+    #|  id="root:build",
+    #|  node="root",
+    #|  cmd="build",
+    #|  needs=[],
+    #|  env={"NODE_ENV": "test", "CI": "1"},
+    #|)
+    #|entrypoint(targets=["root:build"])
+  let parsed = parse_starlark_subset(src)
+  assert_eq(parsed.errors.length(), 0)
+  assert_eq(parsed.ir.tasks.length(), 1)
+  let env = parsed.ir.tasks[0].env
+  assert_eq(env.get("NODE_ENV"), Some("test"))
+  assert_eq(env.get("CI"), Some("1"))
+}
+
+///|
+test "workflow engine: starlark task env rejects non-string value" {
+  let src =
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[])
+    #|task(
+    #|  id="root:build",
+    #|  node="root",
+    #|  cmd="build",
+    #|  needs=[],
+    #|  env={"CI": 1},
+    #|)
+  let parsed = parse_starlark_subset(src)
+  let text = parsed.errors.join("\n")
+  assert_true(text.contains("task.env must be {string:string}"))
+}
+
+///|
+test "workflow engine: starlark assignment binds and references values" {
+  let src =
+    #|workflow_name = "ci"
+    #|target_id = "root:build"
+    #|target_node = "root"
+    #|build_cmd = ["pnpm", "build"]
+    #|task_srcs = ["packages/root/**"]
+    #|task_env = {"NODE_ENV": "test", "CI": "1"}
+    #|workflow(name=workflow_name)
+    #|node(id=target_node, depends_on=[])
+    #|task(id=target_id, node=target_node, cmd=build_cmd, needs=[], srcs=task_srcs, env=task_env)
+    #|entry_targets = [target_id]
+    #|entrypoint(targets=entry_targets)
+  let parsed = parse_starlark_subset(src)
+  assert_eq(parsed.errors.length(), 0)
+  assert_eq(parsed.ir.name, "ci")
+  assert_eq(parsed.ir.entry_targets.length(), 1)
+  assert_eq(parsed.ir.entry_targets[0], "root:build")
+  assert_eq(parsed.ir.tasks.length(), 1)
+  let task = parsed.ir.tasks[0]
+  assert_eq(task.cmd, "pnpm build")
+  assert_eq(task.srcs.length(), 1)
+  assert_eq(task.srcs[0], "packages/root/**")
+  assert_eq(task.env.get("NODE_ENV"), Some("test"))
+}
+
+///|
+test "workflow engine: starlark assignment reports unknown variable reference" {
+  let src =
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[])
+    #|task(id="root:build", node="root", cmd=unknown_cmd, needs=[])
+  let parsed = parse_starlark_subset(src)
+  let text = parsed.errors.join("\n")
+  assert_true(text.contains("unknown variable 'unknown_cmd'"))
+}
+
+///|
+test "workflow engine: starlark var binds default value by name" {
+  let src =
+    #|var(name="workflow_name", default="ci")
+    #|var(name="node_id", default="root")
+    #|var(name="task_id", default="root:build")
+    #|var(name="task_cmd", default=["pnpm", "build"])
+    #|var(name="task_env", default={"NODE_ENV": "test"})
+    #|workflow(name=workflow_name)
+    #|node(id=node_id, depends_on=[])
+    #|task(id=task_id, node=node_id, cmd=task_cmd, needs=[], env=task_env)
+    #|entrypoint(targets=[task_id])
+  let parsed = parse_starlark_subset(src)
+  assert_eq(parsed.errors.length(), 0)
+  assert_eq(parsed.ir.name, "ci")
+  assert_eq(parsed.ir.tasks.length(), 1)
+  let task = parsed.ir.tasks[0]
+  assert_eq(task.cmd, "pnpm build")
+  assert_eq(task.env.get("NODE_ENV"), Some("test"))
+}
+
+///|
+test "workflow engine: starlark config overrides var binding" {
+  let src =
+    #|var(name="profile", default="dev")
+    #|config(name="profile", value="prod")
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[])
+    #|task(id="root:build", node="root", cmd=["echo", profile], needs=[], env={"PROFILE": profile})
+    #|entrypoint(targets=["root:build"])
+  let parsed = parse_starlark_subset(src)
+  assert_eq(parsed.errors.length(), 0)
+  assert_eq(parsed.ir.tasks.length(), 1)
+  let task = parsed.ir.tasks[0]
+  assert_eq(task.cmd, "echo prod")
+  assert_eq(task.env.get("PROFILE"), Some("prod"))
+}
+
+///|
+test "workflow engine: starlark var type enforces default and config values" {
+  let src =
+    #|var(name="retries", type="int", default=1)
+    #|config(name="retries", value=3)
+    #|workflow(name="ci", max_parallel=retries)
+    #|node(id="root", depends_on=[])
+    #|task(id="root:build", node="root", cmd="build", needs=[])
+  let parsed = parse_starlark_subset(src)
+  assert_eq(parsed.errors.length(), 0)
+  assert_eq(parsed.ir.max_parallel, 3)
+  assert_eq(parsed.ir.tasks.length(), 1)
+  assert_eq(parsed.ir.tasks[0].cmd, "build")
+}
+
+///|
+test "workflow engine: starlark var type rejects default mismatch" {
+  let src =
+    #|var(name="retries", type="int", default="1")
+  let parsed = parse_starlark_subset(src)
+  let text = parsed.errors.join("\n")
+  assert_true(text.contains("var.default must match type 'int'"))
+}
+
+///|
+test "workflow engine: starlark var type rejects config mismatch" {
+  let src =
+    #|var(name="retries", type="int", default=1)
+    #|config(name="retries", value="3")
+  let parsed = parse_starlark_subset(src)
+  let text = parsed.errors.join("\n")
+  assert_true(text.contains("config.value for 'retries' must match type 'int'"))
+}
+
+///|
+test "workflow engine: starlark var type rejects unknown type name" {
+  let src =
+    #|var(name="mode", type="unknown", default="dev")
+  let parsed = parse_starlark_subset(src)
+  let text = parsed.errors.join("\n")
+  assert_true(text.contains("var.type must be one of"))
+}
+
+///|
+test "workflow engine: starlark config requires declared var" {
+  let src =
+    #|config(name="mode", value="prod")
+  let parsed = parse_starlark_subset(src)
+  let text = parsed.errors.join("\n")
+  assert_true(text.contains("config.name 'mode' is not declared by var()"))
+}
+
+///|
+test "workflow engine: starlark required var can be injected by external inputs" {
+  let src =
+    #|var(name="profile", type="string", required=True, default="dev")
+    #|workflow(name=profile)
+    #|node(id="root", depends_on=[])
+    #|task(id="root:build", node="root", cmd=["echo", profile], needs=[])
+    #|entrypoint(targets=["root:build"])
+  let parsed = parse_starlark_subset_with_inputs(src, { "profile": "prod" })
+  assert_eq(parsed.errors.length(), 0)
+  assert_eq(parsed.ir.name, "prod")
+  assert_eq(parsed.ir.tasks.length(), 1)
+  assert_eq(parsed.ir.tasks[0].cmd, "echo prod")
+}
+
+///|
+test "workflow engine: starlark required var reports error when unresolved" {
+  let src =
+    #|var(name="profile", type="string", required=True, default="dev")
+    #|workflow(name=profile)
+    #|node(id="root", depends_on=[])
+    #|task(id="root:build", node="root", cmd=["echo", profile], needs=[])
+  let parsed = parse_starlark_subset(src)
+  let text = parsed.errors.join("\n")
+  assert_true(text.contains("required var 'profile' must be provided"))
+}
+
+///|
+test "workflow engine: starlark required var is resolved by config override" {
+  let src =
+    #|var(name="profile", type="string", required=True, default="dev")
+    #|config(name="profile", value="prod")
+    #|workflow(name=profile)
+    #|node(id="root", depends_on=[])
+    #|task(id="root:build", node="root", cmd=["echo", profile], needs=[])
+  let parsed = parse_starlark_subset(src)
+  assert_eq(parsed.errors.length(), 0)
+  assert_eq(parsed.ir.name, "prod")
+  assert_eq(parsed.ir.tasks[0].cmd, "echo prod")
+}
+
+///|
+test "workflow engine: starlark external inputs follow var type conversion" {
+  let src =
+    #|var(name="retries", type="int", required=True, default=1)
+    #|var(name="enable_cache", type="bool", required=True, default=False)
+    #|var(name="labels", type="string_list", required=True, default=["dev"])
+    #|var(name="env_map", type="string_dict", required=True, default={"NODE_ENV": "dev"})
+    #|workflow(name="ci", max_parallel=retries)
+    #|node(id="root", depends_on=[])
+    #|task(id="root:build", node="root", cmd=labels, needs=[], env=env_map, required=enable_cache)
+  let parsed = parse_starlark_subset_with_inputs(src, {
+    "retries": "3",
+    "enable_cache": "true",
+    "labels": "prod,release",
+    "env_map": "NODE_ENV=prod,CI=1",
+  })
+  assert_eq(parsed.errors.length(), 0)
+  assert_eq(parsed.ir.max_parallel, 3)
+  assert_eq(parsed.ir.tasks[0].cmd, "prod release")
+  assert_eq(parsed.ir.tasks[0].required, true)
+  assert_eq(parsed.ir.tasks[0].env.get("NODE_ENV"), Some("prod"))
+  assert_eq(parsed.ir.tasks[0].env.get("CI"), Some("1"))
+}
+
+///|
+test "workflow engine: starlark external input conversion reports type errors" {
+  let src =
+    #|var(name="retries", type="int", required=True, default=1)
+  let parsed = parse_starlark_subset_with_inputs(src, { "retries": "abc" })
+  let text = parsed.errors.join("\n")
+  assert_true(text.contains("external input for 'retries' must be int"))
+}
+
+///|
+test "workflow engine: parse_external_inputs merges env and cli with cli precedence" {
+  let result = parse_external_inputs(
+    ["--var", "profile=prod", "--var=retries=3"],
+    { "BITFLOW_VAR_profile": "dev", "BITFLOW_VAR_node_id": "root" },
+  )
+  assert_eq(result.errors.length(), 0)
+  assert_eq(result.values.get("profile"), Some("prod"))
+  assert_eq(result.values.get("retries"), Some("3"))
+  assert_eq(result.values.get("node_id"), Some("root"))
+}
+
+///|
+test "workflow engine: parse_external_inputs reports malformed cli and env entries" {
+  let result = parse_external_inputs(
+    ["--var", "broken", "--var=novalue", "--var"],
+    { "BITFLOW_VAR_": "x" },
+  )
+  let text = result.errors.join("\n")
+  assert_true(text.contains("expects key=value"))
+  assert_true(text.contains("must be key=value"))
+  assert_true(text.contains("env var key is empty"))
+}
+
+///|
+test "workflow engine: starlark reports unknown external input key" {
+  let src =
+    #|var(name="profile", default="dev")
+    #|workflow(name=profile)
+  let parsed = parse_starlark_subset_with_inputs(src, {
+    "profile": "prod",
+    "profiel": "typo",
+  })
+  let text = parsed.errors.join("\n")
+  assert_true(
+    text.contains("external input 'profiel' is not declared by var()"),
+  )
+}
+
+///|
+test "workflow engine: parse_starlark_subset_with_cli_env injects vars" {
+  let src =
+    #|var(name="profile", type="string", required=True, default="dev")
+    #|workflow(name=profile)
+  let parsed = parse_starlark_subset_with_cli_env(src, ["--var=profile=prod"], {})
+  assert_eq(parsed.errors.length(), 0)
+  assert_eq(parsed.ir.name, "prod")
+}
+
+///|
+test "workflow engine: changed paths selects auto targets and executes dependencies" {
+  let nodes = [new_node("root", []), new_node("dep", ["root"])]
+  let tasks = [
+    new_task(
+      "root:build",
+      "root",
+      "build",
+      [],
+      srcs=["packages/root/**"],
+      trigger_mode="auto",
+    ),
+    new_task(
+      "dep:test",
+      "dep",
+      "test",
+      ["root:build"],
+      srcs=["packages/dep/**"],
+      trigger_mode="manual",
+    ),
+    new_task(
+      "dep:lint",
+      "dep",
+      "lint",
+      ["root:build"],
+      srcs=["packages/dep/**"],
+      trigger_mode="auto",
+    ),
+  ]
+  let ir = new_ir("ci", nodes, tasks)
+  let changed = ["packages/dep/src/main.ts"]
+  let targets = entry_targets_for_changed_paths(ir, changed)
+  assert_eq(targets.contains("dep:lint"), true)
+  assert_eq(targets.contains("dep:test"), false)
+  let result = execute_ir_for_changed_paths(ir, changed, run_ok)
+  assert_eq(result.ok, true)
+  assert_eq(result.order.length(), 2)
+  assert_eq(result.order[0], "root:build")
+  assert_eq(result.order[1], "dep:lint")
 }
 
 ///|
