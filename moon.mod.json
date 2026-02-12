@@ -1,6 +1,6 @@
 {
   "name": "mizchi/bitflow",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "deps": {
     "moonbitlang/async": "0.16.2",
     "moonbitlang/x": "0.4.40"
@@ -8,8 +8,8 @@
   "source": "src",
   "preferred-target": "js",
   "readme": "README.mbt.md",
-  "repository": "",
+  "repository": "https://github.com/mizchi/bitflow",
   "license": "Apache-2.0",
-  "keywords": [],
-  "description": ""
+  "keywords": ["workflow", "starlark", "dag", "cache", "build"],
+  "description": "Workflow engine core with Starlark-subset parser, DAG execution, and cache planning primitives."
 }
