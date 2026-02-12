@@ -68,6 +68,28 @@ test {
 }
 ```
 
+## plan_task_cache
+
+Plans task cache hit/miss decisions from current signatures and previous cache
+entries.
+
+```mbt check
+///|
+test {
+  let nodes = [new_node("root", [])]
+  let tasks = [new_task("root:build", "root", "build", [])]
+  let ir = new_ir("ci", nodes, tasks)
+  let signatures : Map[String, String] = { "root": "sig-root" }
+  let fp = flow_task_fingerprint(tasks[0], nodes[0], signatures)
+  let cache : Map[String, String] = {}
+  cache[flow_cache_key("root:build", "root")] = fp
+  let planned = plan_task_cache(ir, signatures, cache)
+  inspect(planned.issues.length(), content="0")
+  inspect(planned.decisions.length(), content="1")
+  inspect(planned.decisions[0].hit, content="true")
+}
+```
+
 ## execute_ir
 
 Construct IR directly from MoonBit API and execute with a callback runner.

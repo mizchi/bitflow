@@ -60,6 +60,8 @@ pub fn parse_starlark_subset_with_cli_env(String, Array[String], Map[String, Str
 
 pub fn parse_starlark_subset_with_inputs(String, Map[String, String]) -> StarlarkParseResult
 
+pub fn plan_task_cache(FlowIr, Map[String, String], Map[String, String]) -> FlowTaskCachePlanResult
+
 pub fn topological_nodes(Array[FlowNode]) -> Array[FlowNode]
 
 pub fn write_execution_report(String, FlowExecutionResult, WorkflowAdapter) -> Bool
@@ -125,6 +127,18 @@ pub struct FlowTask {
   env : Map[String, String]
   cwd : String
   trigger_mode : String
+}
+
+pub struct FlowTaskCacheDecision {
+  id : String
+  cache_key : String
+  fingerprint : String
+  hit : Bool
+}
+
+pub struct FlowTaskCachePlanResult {
+  decisions : Array[FlowTaskCacheDecision]
+  issues : Array[String]
 }
 
 pub struct FsAdapter {

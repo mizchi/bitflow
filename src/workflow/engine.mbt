@@ -39,6 +39,20 @@ pub struct FlowExecutionResult {
 }
 
 ///|
+pub struct FlowTaskCacheDecision {
+  id : String
+  cache_key : String
+  fingerprint : String
+  hit : Bool
+}
+
+///|
+pub struct FlowTaskCachePlanResult {
+  decisions : Array[FlowTaskCacheDecision]
+  issues : Array[String]
+}
+
+///|
 pub struct StarlarkParseResult {
   ir : FlowIr
   errors : Array[String]
@@ -305,6 +319,15 @@ fn task_as_graph_nodes(tasks : Array[FlowTask]) -> Array[FlowNode] {
 }
 
 ///|
+fn node_id_map(nodes : Array[FlowNode]) -> Map[String, FlowNode] {
+  let mapped : Map[String, FlowNode] = {}
+  for node in nodes {
+    mapped[node.id] = node
+  }
+  mapped
+}
+
+///|
 fn selected_task_set(ir : FlowIr) -> Map[String, Bool] {
   let selected : Map[String, Bool] = {}
   if ir.entry_targets.length() == 0 {
@@ -475,6 +498,39 @@ pub fn ir_issues(ir : FlowIr) -> Array[String] {
     }
   }
   issues
+}
+
+///|
+pub fn plan_task_cache(
+  ir : FlowIr,
+  signatures : Map[String, String],
+  cache_entries : Map[String, String],
+) -> FlowTaskCachePlanResult {
+  let issues = ir_issues(ir)
+  if issues.length() > 0 {
+    return { decisions: [], issues }
+  }
+  let selected = selected_task_set(ir)
+  let ordered = topological_nodes(task_as_graph_nodes(ir.tasks))
+  let tasks = task_node_map(ir.tasks)
+  let nodes = node_id_map(ir.nodes)
+  let decisions : Array[FlowTaskCacheDecision] = []
+  for task_node in ordered {
+    if selected.get(task_node.id) is None {
+      continue
+    }
+    guard tasks.get(task_node.id) is Some(task) else { continue }
+    guard nodes.get(task.node) is Some(node) else { continue }
+    let cache_key = flow_cache_key(task.id, task.node)
+    let fingerprint = flow_task_fingerprint(task, node, signatures)
+    decisions.push({
+      id: task.id,
+      cache_key,
+      fingerprint,
+      hit: cache_entries.get(cache_key) == Some(fingerprint),
+    })
+  }
+  { decisions, issues: [] }
 }
 
 ///|

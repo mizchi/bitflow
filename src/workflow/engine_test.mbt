@@ -4,6 +4,15 @@ fn run_ok(_task : FlowTask) -> (Bool, String) {
 }
 
 ///|
+fn cache_hit_map(result : FlowTaskCachePlanResult) -> Map[String, Bool] {
+  let hits : Map[String, Bool] = {}
+  for decision in result.decisions {
+    hits[decision.id] = decision.hit
+  }
+  hits
+}
+
+///|
 struct TaskScenario {
   task_id : String
   ok : Bool
@@ -330,6 +339,39 @@ test "workflow engine: task fingerprint includes execution metadata" {
   )
   let fp_changed = flow_task_fingerprint(task_changed, node, signatures)
   assert_true(fp_changed != fp_a)
+}
+
+///|
+test "workflow engine: task cache plan reports hit and miss" {
+  let nodes = [new_node("root", []), new_node("dep", ["root"])]
+  let tasks = [
+    new_task("root:build", "root", "build", []),
+    new_task("dep:test", "dep", "test", ["root:build"]),
+  ]
+  let ir = new_ir("ci", nodes, tasks, entry_targets=["dep:test"])
+  let signatures : Map[String, String] = {
+    "root": "sig-root",
+    "dep": "sig-dep",
+  }
+  let build_fp = flow_task_fingerprint(tasks[0], nodes[0], signatures)
+  let cache : Map[String, String] = {}
+  cache[flow_cache_key("root:build", "root")] = build_fp
+  let planned = plan_task_cache(ir, signatures, cache)
+  assert_eq(planned.issues.length(), 0)
+  assert_eq(planned.decisions.length(), 2)
+  let hits = cache_hit_map(planned)
+  assert_eq(hits.get("root:build"), Some(true))
+  assert_eq(hits.get("dep:test"), Some(false))
+}
+
+///|
+test "workflow engine: task cache plan is invalid when ir has issues" {
+  let ir = new_ir("ci", [new_node("root", ["missing"])], [
+    new_task("root:build", "root", "build", []),
+  ])
+  let planned = plan_task_cache(ir, { "root": "sig-root" }, {})
+  assert_eq(planned.decisions.length(), 0)
+  assert_true(planned.issues.length() > 0)
 }
 
 ///|
