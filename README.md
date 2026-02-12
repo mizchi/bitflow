@@ -58,6 +58,7 @@ definitions, not a full Starlark VM.
   `load("path.star")` / `load(path="path.star")`
 - `load` paths are normalized and must stay within workspace root (path escape
   via `..` is rejected)
+- changed-path entry target selection matches both `task.srcs` and `task.outs`
 
 ## Example
 

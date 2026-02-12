@@ -298,21 +298,36 @@ fn wildcard_match(pattern : String, text : String) -> Bool {
 }
 
 ///|
-fn task_matches_changed_paths(
-  task : FlowTask,
+fn patterns_match_changed_paths(
+  patterns : Array[String],
   changed_paths : Array[String],
 ) -> Bool {
-  if task.srcs.length() == 0 {
+  if patterns.length() == 0 {
     return false
   }
-  for src in task.srcs {
+  for pattern in patterns {
     for path in changed_paths {
-      if wildcard_match(src, path) {
+      if wildcard_match(pattern, path) {
         return true
       }
     }
   }
   false
+}
+
+///|
+fn task_matches_changed_paths(
+  task : FlowTask,
+  changed_paths : Array[String],
+) -> Bool {
+  let patterns : Array[String] = []
+  for src in task.srcs {
+    patterns.push(src)
+  }
+  for out in task.outs {
+    patterns.push(out)
+  }
+  patterns_match_changed_paths(patterns, changed_paths)
 }
 
 ///|

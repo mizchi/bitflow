@@ -866,6 +866,30 @@ test "workflow engine: changed paths selects auto targets and executes dependenc
 }
 
 ///|
+test "workflow engine: changed paths can target auto task by outs patterns" {
+  let nodes = [new_node("root", [])]
+  let tasks = [
+    new_task(
+      "root:pack",
+      "root",
+      "pack",
+      [],
+      srcs=[],
+      outs=["dist/root/**"],
+      trigger_mode="auto",
+    ),
+  ]
+  let ir = new_ir("ci", nodes, tasks)
+  let changed = ["dist/root/bundle.js"]
+  let targets = entry_targets_for_changed_paths(ir, changed)
+  assert_eq(targets.length(), 1)
+  assert_eq(targets[0], "root:pack")
+  let result = execute_ir_for_changed_paths(ir, changed, run_ok)
+  assert_eq(result.ok, true)
+  assert_eq(result.order.join(","), "root:pack")
+}
+
+///|
 test "workflow engine: execute_starlark_subset runs parsed workflow directly" {
   let src =
     #|workflow(name="ci")
