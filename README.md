@@ -49,6 +49,20 @@ Supported forms:
 This project intentionally implements a Starlark-based DSL subset for workflow
 definitions, not a full Starlark VM.
 
+### Layered Model
+
+The implementation is organized in three layers:
+
+- **Language Core (Python/Starlark subset evaluator)**:
+  expression parser + evaluator for primitive values, arithmetic, comparison,
+  indexing/slicing, helper functions, and method calls.
+- **Host API (Workflow DSL)**:
+  top-level declarative calls (`workflow/node/task/entrypoint/var/config/load`)
+  and argument contracts.
+- **Execution Layer**:
+  lowering to workflow IR, DAG validation/planning, execution, cache planning,
+  and changed-path target selection.
+
 - Supported top-level calls: `workflow`, `node`, `task` (`target` alias),
   `entrypoint`, `var`, `config`, `load`
 - `var(required=True)` means the value must be provided by `config(...)` or

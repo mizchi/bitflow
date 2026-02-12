@@ -14,6 +14,12 @@ Workflow engine primitives for MoonBit.
 - Adapter boundary for command and filesystem integration
 - Cache helpers (`flow_cache_key`, `flow_fingerprint`, `flow_task_fingerprint`, `plan_task_cache`)
 
+## Layering
+
+- Language core: Python/Starlark subset expression parsing and evaluation
+- Host API: workflow declarative calls (`workflow/node/task/entrypoint/var/config/load`)
+- Execution layer: IR lowering, DAG planning, execution and cache integration
+
 ## Example
 
 ```mbt

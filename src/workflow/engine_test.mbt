@@ -228,10 +228,10 @@ extern "js" fn read_go_errors_subset_from_fs() -> String? =
   #|       ? process.cwd()
   #|       : ".";
   #|     const candidates = [
-  #|       path.join(cwd, "src/workflow/testdata/starlark_go_errors_subset.star"),
-  #|       path.join(cwd, "../src/workflow/testdata/starlark_go_errors_subset.star"),
-  #|       path.join(cwd, "../../src/workflow/testdata/starlark_go_errors_subset.star"),
-  #|       "src/workflow/testdata/starlark_go_errors_subset.star",
+  #|       path.join(cwd, "fixtures/workflow/starlark_go_errors_subset.star"),
+  #|       path.join(cwd, "../fixtures/workflow/starlark_go_errors_subset.star"),
+  #|       path.join(cwd, "../../fixtures/workflow/starlark_go_errors_subset.star"),
+  #|       "fixtures/workflow/starlark_go_errors_subset.star",
   #|     ];
   #|     for (const p of candidates) {
   #|       if (fs.existsSync(p)) {
@@ -269,6 +269,808 @@ fn expected_go_errors_source_marker() -> String {
 ///|
 #cfg(not(target="js"))
 fn expected_go_errors_source_marker() -> String {
+  "# source=embedded-fallback"
+}
+
+///|
+struct ExecutionFixtureCase {
+  name : String
+  source : String
+  scenarios : Array[TaskScenario]
+  runner_default_ok : Bool?
+  runner_default_message : String?
+  expect_ok : Bool?
+  expect_state : String?
+  expect_order : Array[String]
+  expect_steps : Array[String]
+  expect_issues_contains : Array[String]
+  expect_issues_count : Int?
+}
+
+///|
+fn strip_prefix_value(line : String, prefix : String) -> String? {
+  if not(line.has_prefix(prefix)) {
+    return None
+  }
+  let raw = String::unsafe_substring(
+    line,
+    start=prefix.length(),
+    end=line.length(),
+  )
+  Some(trim_ascii_space(raw))
+}
+
+///|
+fn parse_fixture_assignment(raw : String) -> (String, String)? {
+  match raw.find("=") {
+    Some(idx) => {
+      let key = trim_ascii_space(
+        String::unsafe_substring(raw, start=0, end=idx),
+      )
+      let value = trim_ascii_space(
+        String::unsafe_substring(raw, start=idx + 1, end=raw.length()),
+      )
+      if key.length() == 0 {
+        None
+      } else {
+        Some((key, value))
+      }
+    }
+    None => None
+  }
+}
+
+///|
+fn parse_csv_values(raw : String) -> Array[String] {
+  let text = trim_ascii_space(raw)
+  if text.length() == 0 {
+    return []
+  }
+  let values : Array[String] = []
+  for view in text.split(",") {
+    let item = trim_ascii_space(view.to_string())
+    if item.length() > 0 {
+      values.push(item)
+    }
+  }
+  values
+}
+
+///|
+fn parse_fixture_bool(raw : String) -> Bool? {
+  let lowered = trim_ascii_space(raw).to_lower()
+  if lowered == "true" {
+    Some(true)
+  } else if lowered == "false" {
+    Some(false)
+  } else {
+    None
+  }
+}
+
+///|
+fn parse_fixture_int(raw : String) -> Int? {
+  let text = trim_ascii_space(raw)
+  if text.length() == 0 {
+    return None
+  }
+  let zero = '0'.to_int().to_uint16()
+  let nine = '9'.to_int().to_uint16()
+  let mut value = 0
+  let mut idx = 0
+  while idx < text.length() {
+    let ch = text.unsafe_get(idx)
+    if ch < zero || ch > nine {
+      return None
+    }
+    value = value * 10 + (ch - zero).to_int()
+    idx += 1
+  }
+  Some(value)
+}
+
+///|
+fn parse_scenario_spec(raw : String) -> TaskScenario? {
+  match parse_fixture_assignment(raw) {
+    Some((task_id, spec_raw)) => {
+      let spec = trim_ascii_space(spec_raw)
+      let (status, message) = match spec.find(":") {
+        Some(idx) =>
+          (
+            trim_ascii_space(String::unsafe_substring(spec, start=0, end=idx)),
+            trim_ascii_space(
+              String::unsafe_substring(spec, start=idx + 1, end=spec.length()),
+            ),
+          )
+        None => (spec, "")
+      }
+      let lowered = status.to_lower()
+      if lowered == "success" || lowered == "ok" {
+        Some(task_scenario_success(task_id, message~))
+      } else if lowered == "fail" || lowered == "failed" {
+        if message.length() == 0 {
+          Some(task_scenario_failure(task_id))
+        } else {
+          Some(task_scenario_failure(task_id, message~))
+        }
+      } else {
+        None
+      }
+    }
+    None => None
+  }
+}
+
+///|
+fn parse_execution_fixture_cases(text : String) -> Array[ExecutionFixtureCase] {
+  let lines : Array[String] = []
+  for view in text.split("\n") {
+    lines.push(view.to_string())
+  }
+  lines.push("---")
+
+  let cases : Array[ExecutionFixtureCase] = []
+  let mut current_name = "unnamed"
+  let mut current_source_lines : Array[String] = []
+  let mut current_scenarios : Array[TaskScenario] = []
+  let mut current_runner_default_ok : Bool? = None
+  let mut current_runner_default_message : String? = None
+  let mut current_expect_ok : Bool? = None
+  let mut current_expect_state : String? = None
+  let mut current_expect_order : Array[String] = []
+  let mut current_expect_steps : Array[String] = []
+  let mut current_expect_issues_contains : Array[String] = []
+  let mut current_expect_issues_count : Int? = None
+
+  for raw_line in lines {
+    let trimmed = trim_ascii_space(raw_line)
+    if trimmed == "---" {
+      if current_source_lines.length() > 0 {
+        cases.push({
+          name: current_name,
+          source: current_source_lines.join("\n"),
+          scenarios: current_scenarios,
+          runner_default_ok: current_runner_default_ok,
+          runner_default_message: current_runner_default_message,
+          expect_ok: current_expect_ok,
+          expect_state: current_expect_state,
+          expect_order: current_expect_order,
+          expect_steps: current_expect_steps,
+          expect_issues_contains: current_expect_issues_contains,
+          expect_issues_count: current_expect_issues_count,
+        })
+      }
+      current_name = "unnamed"
+      current_source_lines = []
+      current_scenarios = []
+      current_runner_default_ok = None
+      current_runner_default_message = None
+      current_expect_ok = None
+      current_expect_state = None
+      current_expect_order = []
+      current_expect_steps = []
+      current_expect_issues_contains = []
+      current_expect_issues_count = None
+      continue
+    }
+    if trimmed.length() == 0 {
+      continue
+    }
+    if trimmed.has_prefix("#") {
+      match strip_prefix_value(trimmed, "# case=") {
+        Some(value) => {
+          current_name = if value.length() == 0 { "unnamed" } else { value }
+          continue
+        }
+        None => ()
+      }
+      match strip_prefix_value(trimmed, "# scenario ") {
+        Some(value) => {
+          match parse_scenario_spec(value) {
+            Some(scenario) => current_scenarios.push(scenario)
+            None => ()
+          }
+          continue
+        }
+        None => ()
+      }
+      match strip_prefix_value(trimmed, "# runner.default_ok=") {
+        Some(value) => {
+          current_runner_default_ok = parse_fixture_bool(value)
+          continue
+        }
+        None => ()
+      }
+      match strip_prefix_value(trimmed, "# runner.default_message=") {
+        Some(value) => {
+          current_runner_default_message = Some(value)
+          continue
+        }
+        None => ()
+      }
+      match strip_prefix_value(trimmed, "# expect.ok=") {
+        Some(value) => {
+          current_expect_ok = parse_fixture_bool(value)
+          continue
+        }
+        None => ()
+      }
+      match strip_prefix_value(trimmed, "# expect.state=") {
+        Some(value) => {
+          current_expect_state = Some(value)
+          continue
+        }
+        None => ()
+      }
+      match strip_prefix_value(trimmed, "# expect.order=") {
+        Some(value) => {
+          current_expect_order = parse_csv_values(value)
+          continue
+        }
+        None => ()
+      }
+      match strip_prefix_value(trimmed, "# expect.steps=") {
+        Some(value) => {
+          current_expect_steps = parse_csv_values(value)
+          continue
+        }
+        None => ()
+      }
+      match strip_prefix_value(trimmed, "# expect.issues_contains=") {
+        Some(value) => {
+          current_expect_issues_contains = parse_csv_values(value)
+          continue
+        }
+        None => ()
+      }
+      match strip_prefix_value(trimmed, "# expect.issues_count=") {
+        Some(value) => {
+          current_expect_issues_count = parse_fixture_int(value)
+          continue
+        }
+        None => ()
+      }
+      continue
+    }
+    current_source_lines.push(trimmed)
+  }
+  cases
+}
+
+///|
+fn execution_fixtures_embedded() -> String {
+  let text =
+    #|# source=embedded-fallback
+    #|# case=required_failure_blocks_dependent
+    #|# scenario root:build=fail:build failed
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[])
+    #|node(id="dep", depends_on=["root"])
+    #|task(id="root:build", node="root", cmd="build", needs=[])
+    #|task(id="dep:test", node="dep", cmd="test", needs=["root:build"])
+    #|entrypoint(targets=["dep:test"])
+    #|# expect.ok=false
+    #|# expect.state=partial_failed
+    #|# expect.order=root:build,dep:test
+    #|# expect.steps=root:build:failed,dep:test:blocked
+    #|---
+    #|# case=optional_failure_keeps_completed
+    #|# scenario root:lint=fail:lint failed
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[])
+    #|task(id="root:lint", node="root", cmd="lint", needs=[], required=False)
+    #|entrypoint(targets=["root:lint"])
+    #|# expect.ok=true
+    #|# expect.state=completed
+    #|# expect.order=root:lint
+    #|# expect.steps=root:lint:failed
+    #|---
+    #|# case=all_success_chain
+    #|workflow(name="ci")
+    #|node(id="base", depends_on=[])
+    #|node(id="app", depends_on=["base"])
+    #|task(id="base:prep", node="base", cmd="prep", needs=[])
+    #|task(id="app:build", node="app", cmd="build", needs=["base:prep"])
+    #|task(id="app:test", node="app", cmd="test", needs=["app:build"])
+    #|entrypoint(targets=["app:test"])
+    #|# expect.ok=true
+    #|# expect.state=completed
+    #|# expect.order=base:prep,app:build,app:test
+    #|# expect.steps=base:prep:success,app:build:success,app:test:success
+    #|---
+    #|# case=entrypoint_scopes_transitive_only
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[])
+    #|node(id="app", depends_on=["root"])
+    #|node(id="misc", depends_on=[])
+    #|task(id="root:prep", node="root", cmd="prep", needs=[])
+    #|task(id="app:build", node="app", cmd="build", needs=["root:prep"])
+    #|task(id="misc:lint", node="misc", cmd="lint", needs=[])
+    #|entrypoint(targets=["app:build"])
+    #|# expect.ok=true
+    #|# expect.state=completed
+    #|# expect.order=root:prep,app:build
+    #|# expect.steps=root:prep:success,app:build:success
+    #|---
+    #|# case=two_entry_targets_share_dependency
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[])
+    #|node(id="app", depends_on=["root"])
+    #|task(id="root:prep", node="root", cmd="prep", needs=[])
+    #|task(id="app:build", node="app", cmd="build", needs=["root:prep"])
+    #|task(id="app:lint", node="app", cmd="lint", needs=["root:prep"])
+    #|entrypoint(targets=["app:build", "app:lint"])
+    #|# expect.ok=true
+    #|# expect.state=completed
+    #|# expect.order=root:prep,app:build,app:lint
+    #|# expect.steps=root:prep:success,app:build:success,app:lint:success
+    #|---
+    #|# case=optional_failure_blocks_required_dependent
+    #|# scenario root:seed=fail:seed failed
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[])
+    #|node(id="app", depends_on=["root"])
+    #|task(id="root:seed", node="root", cmd="seed", needs=[], required=False)
+    #|task(id="app:use", node="app", cmd="use", needs=["root:seed"])
+    #|entrypoint(targets=["app:use"])
+    #|# expect.ok=false
+    #|# expect.state=partial_failed
+    #|# expect.order=root:seed,app:use
+    #|# expect.steps=root:seed:failed,app:use:blocked
+    #|---
+    #|# case=optional_failure_blocks_optional_dependent
+    #|# scenario root:seed=fail:seed failed
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[])
+    #|node(id="app", depends_on=["root"])
+    #|task(id="root:seed", node="root", cmd="seed", needs=[], required=False)
+    #|task(id="app:use", node="app", cmd="use", needs=["root:seed"], required=False)
+    #|entrypoint(targets=["app:use"])
+    #|# expect.ok=true
+    #|# expect.state=completed
+    #|# expect.order=root:seed,app:use
+    #|# expect.steps=root:seed:failed,app:use:blocked
+    #|---
+    #|# case=required_failure_does_not_stop_independent_task
+    #|# scenario root:build=fail:build failed
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[])
+    #|node(id="util", depends_on=[])
+    #|task(id="root:build", node="root", cmd="build", needs=[])
+    #|task(id="util:lint", node="util", cmd="lint", needs=[])
+    #|entrypoint(targets=["root:build", "util:lint"])
+    #|# expect.ok=false
+    #|# expect.state=partial_failed
+    #|# expect.order=root:build,util:lint
+    #|# expect.steps=root:build:failed,util:lint:success
+    #|---
+    #|# case=no_scenario_defaults_to_success
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[])
+    #|node(id="dep", depends_on=["root"])
+    #|task(id="root:build", node="root", cmd="build", needs=[])
+    #|task(id="dep:test", node="dep", cmd="test", needs=["root:build"])
+    #|entrypoint(targets=["dep:test"])
+    #|# expect.ok=true
+    #|# expect.state=completed
+    #|# expect.order=root:build,dep:test
+    #|# expect.steps=root:build:success,dep:test:success
+    #|---
+    #|# case=max_parallel_batches_preserve_queue_order
+    #|workflow(name="ci", max_parallel=2)
+    #|node(id="n", depends_on=[])
+    #|task(id="n:a", node="n", cmd="a", needs=[])
+    #|task(id="n:b", node="n", cmd="b", needs=[])
+    #|task(id="n:c", node="n", cmd="c", needs=[])
+    #|task(id="n:d", node="n", cmd="d", needs=[])
+    #|entrypoint(targets=["n:a", "n:b", "n:c", "n:d"])
+    #|# expect.ok=true
+    #|# expect.state=completed
+    #|# expect.order=n:a,n:b,n:c,n:d
+    #|# expect.steps=n:a:success,n:b:success,n:c:success,n:d:success
+    #|---
+    #|# case=no_entrypoint_runs_all_tasks
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[])
+    #|node(id="util", depends_on=[])
+    #|task(id="root:build", node="root", cmd="build", needs=[])
+    #|task(id="util:lint", node="util", cmd="lint", needs=[])
+    #|# expect.ok=true
+    #|# expect.state=completed
+    #|# expect.order=root:build,util:lint
+    #|# expect.steps=root:build:success,util:lint:success
+    #|---
+    #|# case=default_runner_failure_causes_required_failure
+    #|# runner.default_ok=false
+    #|# runner.default_message=default failed
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[])
+    #|task(id="root:build", node="root", cmd="build", needs=[])
+    #|entrypoint(targets=["root:build"])
+    #|# expect.ok=false
+    #|# expect.state=partial_failed
+    #|# expect.order=root:build
+    #|# expect.steps=root:build:failed
+    #|---
+    #|# case=scenario_success_overrides_default_failure
+    #|# runner.default_ok=false
+    #|# scenario n:a=success:done
+    #|workflow(name="ci")
+    #|node(id="n", depends_on=[])
+    #|task(id="n:a", node="n", cmd="a", needs=[])
+    #|task(id="n:b", node="n", cmd="b", needs=[])
+    #|entrypoint(targets=["n:a", "n:b"])
+    #|# expect.ok=false
+    #|# expect.state=partial_failed
+    #|# expect.order=n:a,n:b
+    #|# expect.steps=n:a:success,n:b:failed
+    #|---
+    #|# case=scenario_failure_overrides_default_success
+    #|# runner.default_ok=true
+    #|# scenario n:a=fail:boom
+    #|workflow(name="ci")
+    #|node(id="n", depends_on=[])
+    #|task(id="n:a", node="n", cmd="a", needs=[])
+    #|entrypoint(targets=["n:a"])
+    #|# expect.ok=false
+    #|# expect.state=partial_failed
+    #|# expect.order=n:a
+    #|# expect.steps=n:a:failed
+    #|---
+    #|# case=manual_trigger_mode_executes_normally
+    #|workflow(name="ci")
+    #|node(id="n", depends_on=[])
+    #|task(id="n:manual", node="n", cmd="manual", needs=[], trigger="manual")
+    #|entrypoint(targets=["n:manual"])
+    #|# expect.ok=true
+    #|# expect.state=completed
+    #|# expect.order=n:manual
+    #|# expect.steps=n:manual:success
+    #|---
+    #|# case=entrypoint_manual_target_does_not_select_unrelated_auto
+    #|workflow(name="ci")
+    #|node(id="n", depends_on=[])
+    #|task(id="n:manual", node="n", cmd="manual", needs=[], trigger="manual")
+    #|task(id="n:auto", node="n", cmd="auto", needs=[])
+    #|entrypoint(targets=["n:manual"])
+    #|# expect.ok=true
+    #|# expect.state=completed
+    #|# expect.order=n:manual
+    #|# expect.steps=n:manual:success
+    #|---
+    #|# case=diamond_failure_blocks_join
+    #|# scenario n:right=fail:right failed
+    #|workflow(name="ci")
+    #|node(id="n", depends_on=[])
+    #|task(id="n:root", node="n", cmd="root", needs=[])
+    #|task(id="n:left", node="n", cmd="left", needs=["n:root"])
+    #|task(id="n:right", node="n", cmd="right", needs=["n:root"])
+    #|task(id="n:join", node="n", cmd="join", needs=["n:left", "n:right"])
+    #|entrypoint(targets=["n:join"])
+    #|# expect.ok=false
+    #|# expect.state=partial_failed
+    #|# expect.order=n:root,n:left,n:right,n:join
+    #|# expect.steps=n:root:success,n:left:success,n:right:failed,n:join:blocked
+    #|---
+    #|# case=optional_failed_and_optional_blocked_can_complete_with_required_success
+    #|# scenario n:seed=fail:seed failed
+    #|workflow(name="ci")
+    #|node(id="n", depends_on=[])
+    #|task(id="n:seed", node="n", cmd="seed", needs=[], required=False)
+    #|task(id="n:use", node="n", cmd="use", needs=["n:seed"], required=False)
+    #|task(id="n:check", node="n", cmd="check", needs=[])
+    #|entrypoint(targets=["n:use", "n:check"])
+    #|# expect.ok=true
+    #|# expect.state=completed
+    #|# expect.order=n:seed,n:check,n:use
+    #|# expect.steps=n:seed:failed,n:check:success,n:use:blocked
+    #|---
+    #|# case=max_parallel_two_two_stage
+    #|workflow(name="ci", max_parallel=2)
+    #|node(id="n", depends_on=[])
+    #|task(id="n:a", node="n", cmd="a", needs=[])
+    #|task(id="n:b", node="n", cmd="b", needs=[])
+    #|task(id="n:c", node="n", cmd="c", needs=["n:a"])
+    #|task(id="n:d", node="n", cmd="d", needs=["n:b"])
+    #|entrypoint(targets=["n:a", "n:b", "n:c", "n:d"])
+    #|# expect.ok=true
+    #|# expect.state=completed
+    #|# expect.order=n:a,n:b,n:c,n:d
+    #|# expect.steps=n:a:success,n:b:success,n:c:success,n:d:success
+    #|---
+    #|# case=multiple_entry_components_transitive
+    #|workflow(name="ci")
+    #|node(id="n", depends_on=[])
+    #|task(id="n:a1", node="n", cmd="a1", needs=[])
+    #|task(id="n:a2", node="n", cmd="a2", needs=["n:a1"])
+    #|task(id="n:b1", node="n", cmd="b1", needs=[])
+    #|task(id="n:b2", node="n", cmd="b2", needs=["n:b1"])
+    #|entrypoint(targets=["n:a2", "n:b2"])
+    #|# expect.ok=true
+    #|# expect.state=completed
+    #|# expect.order=n:a1,n:b1,n:a2,n:b2
+    #|# expect.steps=n:a1:success,n:b1:success,n:a2:success,n:b2:success
+    #|---
+    #|# case=redundant_entry_targets_deduplicated
+    #|workflow(name="ci")
+    #|node(id="n", depends_on=[])
+    #|task(id="n:build", node="n", cmd="build", needs=[])
+    #|task(id="n:test", node="n", cmd="test", needs=["n:build"])
+    #|entrypoint(targets=["n:test", "n:build"])
+    #|# expect.ok=true
+    #|# expect.state=completed
+    #|# expect.order=n:build,n:test
+    #|# expect.steps=n:build:success,n:test:success
+    #|---
+    #|# case=required_failure_blocks_optional_dependent_and_reports_partial
+    #|# scenario n:root=fail:root failed
+    #|workflow(name="ci")
+    #|node(id="n", depends_on=[])
+    #|task(id="n:root", node="n", cmd="root", needs=[])
+    #|task(id="n:opt", node="n", cmd="opt", needs=["n:root"], required=False)
+    #|entrypoint(targets=["n:opt"])
+    #|# expect.ok=false
+    #|# expect.state=partial_failed
+    #|# expect.order=n:root,n:opt
+    #|# expect.steps=n:root:failed,n:opt:blocked
+    #|---
+    #|# case=optional_failure_independent_of_required_success_completed
+    #|# scenario n:opt=fail:optional failed
+    #|workflow(name="ci")
+    #|node(id="n", depends_on=[])
+    #|task(id="n:opt", node="n", cmd="opt", needs=[], required=False)
+    #|task(id="n:req", node="n", cmd="req", needs=[])
+    #|entrypoint(targets=["n:opt", "n:req"])
+    #|# expect.ok=true
+    #|# expect.state=completed
+    #|# expect.order=n:opt,n:req
+    #|# expect.steps=n:opt:failed,n:req:success
+  text
+}
+
+///|
+#cfg(target="js")
+extern "js" fn read_execution_fixtures_from_fs() -> String? =
+  #| function() {
+  #|   try {
+  #|     const fs = require("node:fs");
+  #|     const path = require("node:path");
+  #|     const cwd = (typeof process !== "undefined" && typeof process.cwd === "function")
+  #|       ? process.cwd()
+  #|       : ".";
+  #|     const candidates = [
+  #|       path.join(cwd, "fixtures/workflow/execution_fixtures.star"),
+  #|       path.join(cwd, "../fixtures/workflow/execution_fixtures.star"),
+  #|       path.join(cwd, "../../fixtures/workflow/execution_fixtures.star"),
+  #|       "fixtures/workflow/execution_fixtures.star",
+  #|     ];
+  #|     for (const p of candidates) {
+  #|       if (fs.existsSync(p)) {
+  #|         return fs.readFileSync(p, "utf8");
+  #|       }
+  #|     }
+  #|     return null;
+  #|   } catch (_err) {
+  #|     return null;
+  #|   }
+  #| }
+
+///|
+#cfg(target="js")
+fn execution_fixtures() -> String {
+  let fallback = execution_fixtures_embedded()
+  match read_execution_fixtures_from_fs() {
+    Some(text) => text
+    None => fallback
+  }
+}
+
+///|
+#cfg(not(target="js"))
+fn execution_fixtures() -> String {
+  execution_fixtures_embedded()
+}
+
+///|
+#cfg(target="js")
+fn expected_execution_fixture_source_marker() -> String {
+  "# source=external-file"
+}
+
+///|
+#cfg(not(target="js"))
+fn expected_execution_fixture_source_marker() -> String {
+  "# source=embedded-fallback"
+}
+
+///|
+fn invalid_execution_fixtures_embedded() -> String {
+  let text =
+    #|# source=embedded-fallback
+    #|# case=duplicate_node_id
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[])
+    #|node(id="root", depends_on=[])
+    #|task(id="root:build", node="root", cmd="build", needs=[])
+    #|entrypoint(targets=["root:build"])
+    #|# expect.ok=false
+    #|# expect.state=invalid
+    #|# expect.order=
+    #|# expect.steps=
+    #|# expect.issues_contains=node: duplicate node id 'root'
+    #|---
+    #|# case=node_depends_on_unknown_node
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=["missing"])
+    #|task(id="root:build", node="root", cmd="build", needs=[])
+    #|entrypoint(targets=["root:build"])
+    #|# expect.ok=false
+    #|# expect.state=invalid
+    #|# expect.order=
+    #|# expect.steps=
+    #|# expect.issues_contains=node: node 'root' depends on unknown node 'missing'
+    #|---
+    #|# case=node_dependency_cycle
+    #|workflow(name="ci")
+    #|node(id="a", depends_on=["b"])
+    #|node(id="b", depends_on=["a"])
+    #|task(id="a:build", node="a", cmd="build", needs=[])
+    #|entrypoint(targets=["a:build"])
+    #|# expect.ok=false
+    #|# expect.state=invalid
+    #|# expect.order=
+    #|# expect.steps=
+    #|# expect.issues_contains=node: dependency graph has a cycle
+    #|---
+    #|# case=duplicate_task_id
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[])
+    #|task(id="root:build", node="root", cmd="build", needs=[])
+    #|task(id="root:build", node="root", cmd="test", needs=[])
+    #|entrypoint(targets=["root:build"])
+    #|# expect.ok=false
+    #|# expect.state=invalid
+    #|# expect.order=
+    #|# expect.steps=
+    #|# expect.issues_contains=duplicate task id 'root:build'
+    #|---
+    #|# case=task_targets_unknown_node
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[])
+    #|task(id="dep:build", node="dep", cmd="build", needs=[])
+    #|entrypoint(targets=["dep:build"])
+    #|# expect.ok=false
+    #|# expect.state=invalid
+    #|# expect.order=
+    #|# expect.steps=
+    #|# expect.issues_contains=targets unknown node 'dep'
+    #|---
+    #|# case=task_depends_on_unknown_task
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[])
+    #|task(id="root:test", node="root", cmd="test", needs=["root:build"])
+    #|entrypoint(targets=["root:test"])
+    #|# expect.ok=false
+    #|# expect.state=invalid
+    #|# expect.order=
+    #|# expect.steps=
+    #|# expect.issues_contains=depends on unknown task 'root:build'
+    #|---
+    #|# case=task_graph_cycle
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[])
+    #|task(id="root:a", node="root", cmd="a", needs=["root:b"])
+    #|task(id="root:b", node="root", cmd="b", needs=["root:a"])
+    #|entrypoint(targets=["root:a"])
+    #|# expect.ok=false
+    #|# expect.state=invalid
+    #|# expect.order=
+    #|# expect.steps=
+    #|# expect.issues_contains=task graph has a cycle
+    #|---
+    #|# case=entry_target_missing
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[])
+    #|task(id="root:build", node="root", cmd="build", needs=[])
+    #|entrypoint(targets=["root:test"])
+    #|# expect.ok=false
+    #|# expect.state=invalid
+    #|# expect.order=
+    #|# expect.steps=
+    #|# expect.issues_contains=entry target 'root:test' does not exist
+    #|---
+    #|# case=multiple_missing_entry_targets
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[])
+    #|task(id="root:build", node="root", cmd="build", needs=[])
+    #|entrypoint(targets=["root:test", "root:deploy"])
+    #|# expect.ok=false
+    #|# expect.state=invalid
+    #|# expect.order=
+    #|# expect.steps=
+    #|# expect.issues_contains=entry target 'root:test' does not exist,entry target 'root:deploy' does not exist
+    #|# expect.issues_count=2
+    #|---
+    #|# case=task_cycle_and_unknown_dependency
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[])
+    #|task(id="root:a", node="root", cmd="a", needs=["root:b", "root:missing"])
+    #|task(id="root:b", node="root", cmd="b", needs=["root:a"])
+    #|entrypoint(targets=["root:a"])
+    #|# expect.ok=false
+    #|# expect.state=invalid
+    #|# expect.order=
+    #|# expect.steps=
+    #|# expect.issues_contains=task 'root:a' depends on unknown task 'root:missing',task graph has a cycle
+    #|# expect.issues_count=2
+    #|---
+    #|# case=mixed_node_and_task_issues
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=["missing"])
+    #|task(id="dup", node="root", cmd="build", needs=["missing:task"])
+    #|task(id="dup", node="ghost", cmd="test", needs=["missing:task"])
+    #|entrypoint(targets=["missing:entry"])
+    #|# expect.ok=false
+    #|# expect.state=invalid
+    #|# expect.order=
+    #|# expect.steps=
+    #|# expect.issues_contains=node: node 'root' depends on unknown node 'missing',duplicate task id 'dup',task 'dup' targets unknown node 'ghost',task 'dup' depends on unknown task 'missing:task',entry target 'missing:entry' does not exist
+    #|# expect.issues_count=6
+  text
+}
+
+///|
+#cfg(target="js")
+extern "js" fn read_invalid_execution_fixtures_from_fs() -> String? =
+  #| function() {
+  #|   try {
+  #|     const fs = require("node:fs");
+  #|     const path = require("node:path");
+  #|     const cwd = (typeof process !== "undefined" && typeof process.cwd === "function")
+  #|       ? process.cwd()
+  #|       : ".";
+  #|     const candidates = [
+  #|       path.join(cwd, "fixtures/workflow/invalid_execution_fixtures.star"),
+  #|       path.join(cwd, "../fixtures/workflow/invalid_execution_fixtures.star"),
+  #|       path.join(cwd, "../../fixtures/workflow/invalid_execution_fixtures.star"),
+  #|       "fixtures/workflow/invalid_execution_fixtures.star",
+  #|     ];
+  #|     for (const p of candidates) {
+  #|       if (fs.existsSync(p)) {
+  #|         return fs.readFileSync(p, "utf8");
+  #|       }
+  #|     }
+  #|     return null;
+  #|   } catch (_err) {
+  #|     return null;
+  #|   }
+  #| }
+
+///|
+#cfg(target="js")
+fn invalid_execution_fixtures() -> String {
+  let fallback = invalid_execution_fixtures_embedded()
+  match read_invalid_execution_fixtures_from_fs() {
+    Some(text) => text
+    None => fallback
+  }
+}
+
+///|
+#cfg(not(target="js"))
+fn invalid_execution_fixtures() -> String {
+  invalid_execution_fixtures_embedded()
+}
+
+///|
+#cfg(target="js")
+fn expected_invalid_execution_fixture_source_marker() -> String {
+  "# source=external-file"
+}
+
+///|
+#cfg(not(target="js"))
+fn expected_invalid_execution_fixture_source_marker() -> String {
   "# source=embedded-fallback"
 }
 
@@ -1029,6 +1831,840 @@ test "workflow engine: starlark compatibility supports single quote and bool lit
 }
 
 ///|
+test "workflow engine: starlark compatibility supports plus expressions" {
+  let src =
+    #|task_name = "build"
+    #|workflow(name="ci", max_parallel=1 + 1)
+    #|node(id="root", depends_on=[])
+    #|task(id="root:" + task_name, node="root", cmd=["just", task_name + "-all"], needs=[])
+    #|entrypoint(targets=["root:" + task_name])
+  let parsed = parse(src)
+  assert_eq(parsed.errors.length(), 0)
+  assert_eq(parsed.ir.max_parallel, 2)
+  assert_eq(parsed.ir.tasks.length(), 1)
+  assert_eq(parsed.ir.tasks[0].id, "root:build")
+  assert_eq(parsed.ir.tasks[0].cmd, "just build-all")
+  assert_eq(parsed.ir.entry_targets.length(), 1)
+  assert_eq(parsed.ir.entry_targets[0], "root:build")
+}
+
+///|
+test "workflow engine: starlark compatibility recognizes None literal" {
+  let src =
+    #|workflow(name=None)
+  let parsed = parse(src)
+  let text = parsed.errors.join("\n")
+  assert_true(text.contains("workflow.name must be string"))
+}
+
+///|
+test "workflow engine: starlark compatibility supports equality expressions" {
+  let src =
+    #|mode = "strict"
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[], required=mode == "strict")
+    #|task(id="root:build", node="root", cmd="build", needs=[], required=mode != "skip")
+    #|entrypoint(targets=["root:build"])
+  let parsed = parse(src)
+  assert_eq(parsed.errors.length(), 0)
+  assert_eq(parsed.ir.nodes.length(), 1)
+  assert_eq(parsed.ir.nodes[0].required, true)
+  assert_eq(parsed.ir.tasks.length(), 1)
+  assert_eq(parsed.ir.tasks[0].required, true)
+}
+
+///|
+test "workflow engine: starlark compatibility comparison has lower precedence than plus" {
+  let src =
+    #|task_name = "build"
+    #|is_entry = "root:" + task_name == "root:build"
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[], required=is_entry)
+    #|task(id="root:build", node="root", cmd="build", needs=[])
+    #|entrypoint(targets=["root:build"])
+  let parsed = parse(src)
+  assert_eq(parsed.errors.length(), 0)
+  assert_eq(parsed.ir.nodes.length(), 1)
+  assert_eq(parsed.ir.nodes[0].required, true)
+}
+
+///|
+test "workflow engine: starlark compatibility supports None equality" {
+  let src =
+    #|missing = None
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[], required=missing == None)
+    #|task(id="root:build", node="root", cmd="build", needs=[], required=missing != None)
+    #|entrypoint(targets=["root:build"])
+  let parsed = parse(src)
+  assert_eq(parsed.errors.length(), 0)
+  assert_eq(parsed.ir.nodes.length(), 1)
+  assert_eq(parsed.ir.nodes[0].required, true)
+  assert_eq(parsed.ir.tasks.length(), 1)
+  assert_eq(parsed.ir.tasks[0].required, false)
+}
+
+///|
+test "workflow engine: starlark compatibility reports invalid plus operand types" {
+  let src =
+    #|workflow(name="ci", max_parallel=1 + "x")
+  let parsed = parse(src)
+  let text = parsed.errors.join("\n")
+  assert_true(text.contains("'+' requires both operands"))
+}
+
+///|
+test "workflow engine: starlark compatibility supports binary minus and multiply" {
+  let src =
+    #|n = 5
+    #|workflow(name="ci", max_parallel=1 + (n - 2))
+    #|node(id="root", depends_on=[], required=(2 * 3 == 6) and (n - 3 == 2))
+    #|task(id="root:build", node="root", cmd="build", needs=[], required=(n - 2 * 2 == 1))
+    #|entrypoint(targets=["root:build"])
+  let parsed = parse(src)
+  assert_eq(parsed.errors.length(), 0)
+  assert_eq(parsed.ir.max_parallel, 4)
+  assert_eq(parsed.ir.nodes.length(), 1)
+  assert_eq(parsed.ir.nodes[0].required, true)
+  assert_eq(parsed.ir.tasks.length(), 1)
+  assert_eq(parsed.ir.tasks[0].required, true)
+}
+
+///|
+test "workflow engine: starlark compatibility supports sequence repetition by multiply" {
+  let src =
+    #|label = "ab" * 2
+    #|items = ["x"] * 3
+    #|workflow(name=2 * "ci")
+    #|node(id="root", depends_on=[], required=label == "abab" and items == ["x", "x", "x"])
+    #|task(id="root:build", node="root", cmd="build", needs=[], required=(2 * ["a", "b"] == ["a", "b", "a", "b"]) and ("x" * 0 == ""))
+    #|entrypoint(targets=["root:build"])
+  let parsed = parse(src)
+  assert_eq(parsed.errors.length(), 0)
+  assert_eq(parsed.ir.name, "cici")
+  assert_eq(parsed.ir.nodes.length(), 1)
+  assert_eq(parsed.ir.nodes[0].required, true)
+  assert_eq(parsed.ir.tasks.length(), 1)
+  assert_eq(parsed.ir.tasks[0].required, true)
+}
+
+///|
+test "workflow engine: starlark arithmetic reports invalid operand types" {
+  let src =
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[], required=("x" - "y") == 0)
+    #|task(id="root:build", node="root", cmd="build", needs=[], required=({"k":"v"} * 2) == 0)
+    #|entrypoint(targets=["root:build"])
+  let parsed = parse(src)
+  let text = parsed.errors.join("\n")
+  assert_true(text.contains("'-' requires int operands"))
+  assert_true(text.contains("'*' requires int*int or (string/list)*int"))
+}
+
+///|
+test "workflow engine: starlark compatibility supports floor division and modulo" {
+  let src =
+    #|workflow(name="ci", max_parallel=8 // 2 + 1)
+    #|node(id="root", depends_on=[], required=(7 % 3 == 1) and (3 * 2 // 3 == 2))
+    #|task(id="root:build", node="root", cmd="build", needs=[], required=(8 // 3 == 2))
+    #|entrypoint(targets=["root:build"])
+  let parsed = parse(src)
+  assert_eq(parsed.errors.length(), 0)
+  assert_eq(parsed.ir.max_parallel, 5)
+  assert_eq(parsed.ir.nodes.length(), 1)
+  assert_eq(parsed.ir.nodes[0].required, true)
+  assert_eq(parsed.ir.tasks.length(), 1)
+  assert_eq(parsed.ir.tasks[0].required, true)
+}
+
+///|
+test "workflow engine: starlark floor division and modulo report invalid usage" {
+  let src =
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[], required=("x" // 2) == 0)
+    #|task(id="root:build", node="root", cmd="build", needs=[], required=(1 % 0) == 0)
+    #|entrypoint(targets=["root:build"])
+  let parsed = parse(src)
+  let text = parsed.errors.join("\n")
+  assert_true(text.contains("'//' requires int operands"))
+  assert_true(text.contains("integer modulo by zero"))
+}
+
+///|
+test "workflow engine: starlark compatibility supports logical operators and grouping" {
+  let src =
+    #|flag = not ("x" == "y")
+    #|gate = ("root:" + "build" == "root:build") and flag
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[], required=gate)
+    #|task(id="root:build", node="root", cmd="build", needs=[], required=None or False)
+    #|entrypoint(targets=["root:build"])
+  let parsed = parse(src)
+  assert_eq(parsed.errors.length(), 0)
+  assert_eq(parsed.ir.nodes.length(), 1)
+  assert_eq(parsed.ir.nodes[0].required, true)
+  assert_eq(parsed.ir.tasks.length(), 1)
+  assert_eq(parsed.ir.tasks[0].required, false)
+}
+
+///|
+test "workflow engine: starlark logical operators short-circuit unresolved refs" {
+  let src =
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[], required=False and missing_ref)
+    #|task(id="root:build", node="root", cmd="build", needs=[], required=True or missing_ref)
+    #|entrypoint(targets=["root:build"])
+  let parsed = parse(src)
+  assert_eq(parsed.errors.length(), 0)
+  assert_eq(parsed.ir.nodes[0].required, false)
+  assert_eq(parsed.ir.tasks[0].required, true)
+}
+
+///|
+test "workflow engine: starlark parser reports unclosed grouped expression" {
+  let src =
+    #|workflow(name=("ci", max_parallel=1)
+  let parsed = parse(src)
+  let text = parsed.errors.join("\n")
+  assert_true(text.contains("expected ')' to close expression"))
+}
+
+///|
+test "workflow engine: starlark compatibility supports relational operators" {
+  let src =
+    #|workers = 3
+    #|workflow(name="ci", max_parallel=workers)
+    #|node(id="root", depends_on=[], required=workers >= 3 and workers > 2 and workers <= 3 and workers < 4)
+    #|task(id="root:build", node="root", cmd="build", needs=[], required=workers < 3)
+    #|entrypoint(targets=["root:build"])
+  let parsed = parse(src)
+  assert_eq(parsed.errors.length(), 0)
+  assert_eq(parsed.ir.max_parallel, 3)
+  assert_eq(parsed.ir.nodes.length(), 1)
+  assert_eq(parsed.ir.nodes[0].required, true)
+  assert_eq(parsed.ir.tasks.length(), 1)
+  assert_eq(parsed.ir.tasks[0].required, false)
+}
+
+///|
+test "workflow engine: starlark compatibility supports chained comparisons" {
+  let src =
+    #|workers = 3
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[], required=1 < workers < 5)
+    #|task(id="root:build", node="root", cmd="build", needs=[], required=5 > workers >= 3)
+    #|entrypoint(targets=["root:build"])
+  let parsed = parse(src)
+  assert_eq(parsed.errors.length(), 0)
+  assert_eq(parsed.ir.nodes.length(), 1)
+  assert_eq(parsed.ir.nodes[0].required, true)
+  assert_eq(parsed.ir.tasks.length(), 1)
+  assert_eq(parsed.ir.tasks[0].required, true)
+}
+
+///|
+test "workflow engine: starlark chained comparisons short-circuit unresolved refs" {
+  let src =
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[], required=3 < 2 < missing_ref)
+    #|task(id="root:build", node="root", cmd="build", needs=[], required=2 > 3 > missing_ref)
+    #|entrypoint(targets=["root:build"])
+  let parsed = parse(src)
+  assert_eq(parsed.errors.length(), 0)
+  assert_eq(parsed.ir.nodes.length(), 1)
+  assert_eq(parsed.ir.nodes[0].required, false)
+  assert_eq(parsed.ir.tasks.length(), 1)
+  assert_eq(parsed.ir.tasks[0].required, false)
+}
+
+///|
+test "workflow engine: starlark compatibility supports in and not in operators" {
+  let src =
+    #|labels = ["build", "test"]
+    #|env = {"MODE":"prod"}
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[], required="build" in labels and "release" not in labels)
+    #|task(id="root:build", node="root", cmd="build", needs=[], required="MODE" in env and "DEBUG" not in env and "od" in "prod")
+    #|entrypoint(targets=["root:build"])
+  let parsed = parse(src)
+  assert_eq(parsed.errors.length(), 0)
+  assert_eq(parsed.ir.nodes.length(), 1)
+  assert_eq(parsed.ir.nodes[0].required, true)
+  assert_eq(parsed.ir.tasks.length(), 1)
+  assert_eq(parsed.ir.tasks[0].required, true)
+}
+
+///|
+test "workflow engine: starlark compatibility supports index expressions" {
+  let src =
+    #|labels = ["build", "test"]
+    #|env = {"MODE":"prod"}
+    #|workflow(name="c" + "i")
+    #|node(id="root", depends_on=[], required=labels[0] == "build" and env["MODE"][0] == "p")
+    #|task(id="root:build", node="root", cmd="build", needs=[], required=("i" == "ci"[1]) and labels[1] == "test")
+    #|entrypoint(targets=["root:build"])
+  let parsed = parse(src)
+  assert_eq(parsed.errors.length(), 0)
+  assert_eq(parsed.ir.nodes.length(), 1)
+  assert_eq(parsed.ir.nodes[0].required, true)
+  assert_eq(parsed.ir.tasks.length(), 1)
+  assert_eq(parsed.ir.tasks[0].required, true)
+}
+
+///|
+test "workflow engine: starlark index expression short-circuits unresolved refs" {
+  let src =
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[], required=False and missing_ref[0])
+    #|task(id="root:build", node="root", cmd="build", needs=[], required=True or missing_ref[0])
+    #|entrypoint(targets=["root:build"])
+  let parsed = parse(src)
+  assert_eq(parsed.errors.length(), 0)
+  assert_eq(parsed.ir.nodes.length(), 1)
+  assert_eq(parsed.ir.nodes[0].required, false)
+  assert_eq(parsed.ir.tasks.length(), 1)
+  assert_eq(parsed.ir.tasks[0].required, true)
+}
+
+///|
+test "workflow engine: starlark index expression reports invalid access" {
+  let src =
+    #|items = ["a"]
+    #|env = {"MODE":"prod"}
+    #|workflow(name=items["0"])
+    #|node(id="root", depends_on=[], required=items[1] == "a")
+    #|task(id="root:build", node="root", cmd="build", needs=[], required=env["DEBUG"] == "1")
+    #|entrypoint(targets=["root:build"])
+  let parsed = parse(src)
+  let text = parsed.errors.join("\n")
+  assert_true(text.contains("list index must be int"))
+  assert_true(text.contains("list index out of range"))
+  assert_true(text.contains("dict key not found"))
+}
+
+///|
+test "workflow engine: starlark compatibility supports slice expressions" {
+  let src =
+    #|labels = ["build", "test", "lint"]
+    #|word = "workflow"
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[], required=labels[0:2] == ["build", "test"] and labels[:1] == ["build"])
+    #|task(id="root:build", node="root", cmd="build", needs=[], required=labels[1:] == ["test", "lint"] and word[1:5] == "orkf" and word[-4:-1] == "flo")
+    #|entrypoint(targets=["root:build"])
+  let parsed = parse(src)
+  assert_eq(parsed.errors.length(), 0)
+  assert_eq(parsed.ir.nodes.length(), 1)
+  assert_eq(parsed.ir.nodes[0].required, true)
+  assert_eq(parsed.ir.tasks.length(), 1)
+  assert_eq(parsed.ir.tasks[0].required, true)
+}
+
+///|
+test "workflow engine: starlark slice expression short-circuits unresolved refs" {
+  let src =
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[], required=False and missing_ref[0:1])
+    #|task(id="root:build", node="root", cmd="build", needs=[], required=True or missing_ref[:1])
+    #|entrypoint(targets=["root:build"])
+  let parsed = parse(src)
+  assert_eq(parsed.errors.length(), 0)
+  assert_eq(parsed.ir.nodes.length(), 1)
+  assert_eq(parsed.ir.nodes[0].required, false)
+  assert_eq(parsed.ir.tasks.length(), 1)
+  assert_eq(parsed.ir.tasks[0].required, true)
+}
+
+///|
+test "workflow engine: starlark slice expression reports invalid bounds" {
+  let src =
+    #|items = ["a", "b"]
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[], required=items["0":1] == ["a"])
+    #|task(id="root:build", node="root", cmd="build", needs=[], required="abc"[0:"2"] == "ab")
+    #|entrypoint(targets=["root:build"])
+  let parsed = parse(src)
+  let text = parsed.errors.join("\n")
+  assert_true(text.contains("slice start must be int"))
+  assert_true(text.contains("slice end must be int"))
+}
+
+///|
+test "workflow engine: starlark compatibility supports expression helper calls" {
+  let src =
+    #|labels = ["build", "test"]
+    #|env = {"MODE":"prod"}
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[], required=len(labels) == 2 and len(env) == 1 and len("ok") == 2)
+    #|task(id="root:build", node="root", cmd="build", needs=[], required=get(env, "MODE") == "prod" and get(env, "DEBUG", "0") == "0")
+    #|entrypoint(targets=["root:build"])
+  let parsed = parse(src)
+  assert_eq(parsed.errors.length(), 0)
+  assert_eq(parsed.ir.nodes.length(), 1)
+  assert_eq(parsed.ir.nodes[0].required, true)
+  assert_eq(parsed.ir.tasks.length(), 1)
+  assert_eq(parsed.ir.tasks[0].required, true)
+}
+
+///|
+test "workflow engine: starlark get without default returns None" {
+  let src =
+    #|env = {"MODE":"prod"}
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[], required=get(env, "DEBUG") == None)
+    #|task(id="root:build", node="root", cmd="build", needs=[], required=get(env, "MODE") == "prod")
+    #|entrypoint(targets=["root:build"])
+  let parsed = parse(src)
+  assert_eq(parsed.errors.length(), 0)
+  assert_eq(parsed.ir.nodes.length(), 1)
+  assert_eq(parsed.ir.nodes[0].required, true)
+  assert_eq(parsed.ir.tasks.length(), 1)
+  assert_eq(parsed.ir.tasks[0].required, true)
+}
+
+///|
+test "workflow engine: starlark expression helper call reports unknown function" {
+  let src =
+    #|workflow(name=unknown_helper("ci"))
+  let parsed = parse(src)
+  let text = parsed.errors.join("\n")
+  assert_true(text.contains("unknown expression function"))
+}
+
+///|
+test "workflow engine: starlark len reports invalid operand type" {
+  let src =
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[], required=len(1) == 1)
+    #|task(id="root:build", node="root", cmd="build", needs=[])
+    #|entrypoint(targets=["root:build"])
+  let parsed = parse(src)
+  let text = parsed.errors.join("\n")
+  assert_true(text.contains("len() expects string, list, or dict"))
+}
+
+///|
+test "workflow engine: starlark compatibility supports str and int helper calls" {
+  let src =
+    #|n = int("2")
+    #|workflow(name="ci-" + str(n))
+    #|node(id="root", depends_on=[], required=int("1") == 1 and int(True) == 1 and int(False) == 0)
+    #|task(id="root:build", node="root", cmd="build", needs=[], required=str(True) == "True" and str(None) == "None")
+    #|entrypoint(targets=["root:build"])
+  let parsed = parse(src)
+  assert_eq(parsed.errors.length(), 0)
+  assert_eq(parsed.ir.name, "ci-2")
+  assert_eq(parsed.ir.nodes.length(), 1)
+  assert_eq(parsed.ir.nodes[0].required, true)
+  assert_eq(parsed.ir.tasks.length(), 1)
+  assert_eq(parsed.ir.tasks[0].required, true)
+}
+
+///|
+test "workflow engine: starlark int reports invalid input" {
+  let src =
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[], required=int("x") == 0)
+    #|task(id="root:build", node="root", cmd="build", needs=[])
+    #|entrypoint(targets=["root:build"])
+  let parsed = parse(src)
+  let text = parsed.errors.join("\n")
+  assert_true(text.contains("int() expects numeric string"))
+}
+
+///|
+test "workflow engine: starlark str reports invalid arity" {
+  let src =
+    #|workflow(name=str("ci", "extra"))
+  let parsed = parse(src)
+  let text = parsed.errors.join("\n")
+  assert_true(text.contains("str() expects exactly 1 argument"))
+}
+
+///|
+test "workflow engine: starlark compatibility supports keys and values helper calls" {
+  let src =
+    #|env = {"MODE":"prod", "DEBUG":"0"}
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[], required=len(keys(env)) == 2 and "MODE" in keys(env) and "DEBUG" in keys(env))
+    #|task(id="root:build", node="root", cmd="build", needs=[], required=len(values(env)) == 2 and "prod" in values(env) and "0" in values(env))
+    #|entrypoint(targets=["root:build"])
+  let parsed = parse(src)
+  assert_eq(parsed.errors.length(), 0)
+  assert_eq(parsed.ir.nodes.length(), 1)
+  assert_eq(parsed.ir.nodes[0].required, true)
+  assert_eq(parsed.ir.tasks.length(), 1)
+  assert_eq(parsed.ir.tasks[0].required, true)
+}
+
+///|
+test "workflow engine: starlark keys and values report invalid args" {
+  let src =
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[], required=keys("x") == [])
+    #|task(id="root:build", node="root", cmd="build", needs=[], required=values({"k":"v"}, "extra") == [])
+    #|entrypoint(targets=["root:build"])
+  let parsed = parse(src)
+  let text = parsed.errors.join("\n")
+  assert_true(text.contains("keys() expects dict"))
+  assert_true(text.contains("values() expects exactly 1 argument"))
+}
+
+///|
+test "workflow engine: starlark compatibility supports contains helper call" {
+  let src =
+    #|labels = ["build", "test"]
+    #|env = {"MODE":"prod", "DEBUG":"0"}
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[], required=contains(labels, "build") and contains("workflow", "flow"))
+    #|task(id="root:build", node="root", cmd="build", needs=[], required=contains(env, "MODE") and not contains(env, "MISSING"))
+    #|entrypoint(targets=["root:build"])
+  let parsed = parse(src)
+  assert_eq(parsed.errors.length(), 0)
+  assert_eq(parsed.ir.nodes.length(), 1)
+  assert_eq(parsed.ir.nodes[0].required, true)
+  assert_eq(parsed.ir.tasks.length(), 1)
+  assert_eq(parsed.ir.tasks[0].required, true)
+}
+
+///|
+test "workflow engine: starlark contains reports invalid args" {
+  let src =
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[], required=contains("x"))
+    #|task(id="root:build", node="root", cmd="build", needs=[], required=contains(1, 1))
+    #|entrypoint(targets=["root:build"])
+  let parsed = parse(src)
+  let text = parsed.errors.join("\n")
+  assert_true(text.contains("contains() expects exactly 2 arguments"))
+  assert_true(
+    text.contains("contains() first argument must be string, list, or dict"),
+  )
+}
+
+///|
+test "workflow engine: starlark compatibility supports all and any helper calls" {
+  let src =
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[], required=all([True, 1, "ok"]) and any([False, 0, "ok"]) and all([]) and not any([]))
+    #|task(id="root:build", node="root", cmd="build", needs=[], required=any({"":"x", "k":"v"}) and not all({"":"x"}) and any("x") and all("x") and all(""))
+    #|entrypoint(targets=["root:build"])
+  let parsed = parse(src)
+  assert_eq(parsed.errors.length(), 0)
+  assert_eq(parsed.ir.nodes.length(), 1)
+  assert_eq(parsed.ir.nodes[0].required, true)
+  assert_eq(parsed.ir.tasks.length(), 1)
+  assert_eq(parsed.ir.tasks[0].required, true)
+}
+
+///|
+test "workflow engine: starlark all and any report invalid args" {
+  let src =
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[], required=all(1))
+    #|task(id="root:build", node="root", cmd="build", needs=[], required=any("x", "y"))
+    #|entrypoint(targets=["root:build"])
+  let parsed = parse(src)
+  let text = parsed.errors.join("\n")
+  assert_true(text.contains("all() expects string, list, or dict"))
+  assert_true(text.contains("any() expects exactly 1 argument"))
+}
+
+///|
+test "workflow engine: starlark compatibility supports split and join helper calls" {
+  let src =
+    #|parts = split("root:build:test", ":")
+    #|workflow(name=join(parts, "-"))
+    #|node(id="root", depends_on=[], required=parts == ["root", "build", "test"] and split("a--b--c", "--")[1] == "b")
+    #|task(id="root:build", node="root", cmd="build", needs=[], required=join(["root", "build"], ":") == "root:build" and join(split("x/y", "/"), ":") == "x:y")
+    #|entrypoint(targets=["root:build"])
+  let parsed = parse(src)
+  assert_eq(parsed.errors.length(), 0)
+  assert_eq(parsed.ir.name, "root-build-test")
+  assert_eq(parsed.ir.nodes.length(), 1)
+  assert_eq(parsed.ir.nodes[0].required, true)
+  assert_eq(parsed.ir.tasks.length(), 1)
+  assert_eq(parsed.ir.tasks[0].required, true)
+}
+
+///|
+test "workflow engine: starlark split and join report invalid args" {
+  let src =
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[], required=split("a:b") == [])
+    #|task(id="root:build", node="root", cmd="build", needs=[], required=join(["a", 1], ":") == "")
+    #|entrypoint(targets=["root:build"])
+  let parsed = parse(src)
+  let text = parsed.errors.join("\n")
+  assert_true(text.contains("split() expects exactly 2 arguments"))
+  assert_true(text.contains("join() items must be string list"))
+}
+
+///|
+test "workflow engine: starlark compatibility supports min and max helper calls" {
+  let src =
+    #|numbers = [3, 1, 2]
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[], required=min(numbers) == 1 and max(numbers) == 3 and min(5, 2, 9) == 2 and max(5, 2, 9) == 9)
+    #|task(id="root:build", node="root", cmd="build", needs=[], required=min(4, 2) == 2 and max([1, 4, 3]) == 4)
+    #|entrypoint(targets=["root:build"])
+  let parsed = parse(src)
+  assert_eq(parsed.errors.length(), 0)
+  assert_eq(parsed.ir.nodes.length(), 1)
+  assert_eq(parsed.ir.nodes[0].required, true)
+  assert_eq(parsed.ir.tasks.length(), 1)
+  assert_eq(parsed.ir.tasks[0].required, true)
+}
+
+///|
+test "workflow engine: starlark min and max report invalid args" {
+  let src =
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[], required=min() == 0)
+    #|task(id="root:build", node="root", cmd="build", needs=[], required=max(["x", 1]) == 0)
+    #|entrypoint(targets=["root:build"])
+  let parsed = parse(src)
+  let text = parsed.errors.join("\n")
+  assert_true(text.contains("min() expects at least 1 argument"))
+  assert_true(text.contains("max() expects int arguments or [int]"))
+}
+
+///|
+test "workflow engine: starlark compatibility supports abs and clamp helper calls" {
+  let src =
+    #|workflow(name="ci", max_parallel=clamp(abs(-9), 1, 6))
+    #|node(id="root", depends_on=[], required=abs(-3) == 3 and abs(0) == 0 and clamp(0, 1, 3) == 1 and clamp(2, 1, 3) == 2 and clamp(9, 1, 3) == 3)
+    #|task(id="root:build", node="root", cmd="build", needs=[], required=clamp(abs(-2) + 1, 1, 5) == 3)
+    #|entrypoint(targets=["root:build"])
+  let parsed = parse(src)
+  assert_eq(parsed.errors.length(), 0)
+  assert_eq(parsed.ir.max_parallel, 6)
+  assert_eq(parsed.ir.nodes.length(), 1)
+  assert_eq(parsed.ir.nodes[0].required, true)
+  assert_eq(parsed.ir.tasks.length(), 1)
+  assert_eq(parsed.ir.tasks[0].required, true)
+}
+
+///|
+test "workflow engine: starlark abs and clamp report invalid args" {
+  let src =
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[], required=abs("x") == 0)
+    #|task(id="root:build", node="root", cmd="build", needs=[], required=clamp(1, 3, 2) == 0)
+    #|entrypoint(targets=["root:build"])
+  let parsed = parse(src)
+  let text = parsed.errors.join("\n")
+  assert_true(text.contains("abs() expects int argument"))
+  assert_true(text.contains("clamp() requires min <= max"))
+}
+
+///|
+test "workflow engine: starlark compatibility supports sum and product helper calls" {
+  let src =
+    #|nums = [1, 2, 3]
+    #|workflow(name="ci", max_parallel=sum(nums))
+    #|node(id="root", depends_on=[], required=sum(nums) == 6 and sum(1, 2, 3) == 6 and sum([]) == 0)
+    #|task(id="root:build", node="root", cmd="build", needs=[], required=product(nums) == 6 and product(2, 3, 4) == 24 and product([]) == 1)
+    #|entrypoint(targets=["root:build"])
+  let parsed = parse(src)
+  assert_eq(parsed.errors.length(), 0)
+  assert_eq(parsed.ir.max_parallel, 6)
+  assert_eq(parsed.ir.nodes.length(), 1)
+  assert_eq(parsed.ir.nodes[0].required, true)
+  assert_eq(parsed.ir.tasks.length(), 1)
+  assert_eq(parsed.ir.tasks[0].required, true)
+}
+
+///|
+test "workflow engine: starlark sum and product report invalid args" {
+  let src =
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[], required=sum() == 0)
+    #|task(id="root:build", node="root", cmd="build", needs=[], required=product(["x", 1]) == 0)
+    #|entrypoint(targets=["root:build"])
+  let parsed = parse(src)
+  let text = parsed.errors.join("\n")
+  assert_true(text.contains("sum() expects at least 1 argument"))
+  assert_true(text.contains("product() expects int arguments or [int]"))
+}
+
+///|
+test "workflow engine: starlark compatibility supports tuple literals" {
+  let src =
+    #|deps = ("base",)
+    #|needs = ("base:prep",)
+    #|targets = ("root:build",)
+    #|workflow(name=("c", "i")[0] + ("c", "i")[1])
+    #|node(id="base", depends_on=())
+    #|node(id="root", depends_on=deps, required=("a", "b")[1] == "b" and len(()) == 0)
+    #|task(id="base:prep", node="base", cmd="prep", needs=())
+    #|task(id="root:build", node="root", cmd="build", needs=needs)
+    #|entrypoint(targets=targets)
+  let parsed = parse(src)
+  assert_eq(parsed.errors.length(), 0)
+  assert_eq(parsed.ir.name, "ci")
+  assert_eq(parsed.ir.nodes.length(), 2)
+  assert_eq(parsed.ir.nodes[1].depends_on.length(), 1)
+  assert_eq(parsed.ir.nodes[1].depends_on[0], "base")
+  assert_eq(parsed.ir.tasks.length(), 2)
+  assert_eq(parsed.ir.tasks[1].needs.length(), 1)
+  assert_eq(parsed.ir.tasks[1].needs[0], "base:prep")
+  assert_eq(parsed.ir.entry_targets.length(), 1)
+  assert_eq(parsed.ir.entry_targets[0], "root:build")
+}
+
+///|
+test "workflow engine: starlark compatibility supports method call syntax" {
+  let src =
+    #|parts = "root:build".split(":")
+    #|env = {"MODE":"prod"}
+    #|workflow(name="-".join(parts))
+    #|node(id="root", depends_on=[], required="Build".lower() == "build" and "x".upper() == "X" and "root:build".startswith("root:") and "root:build".endswith(":build") and "a-a-a".replace("-", ":", 1) == "a:a-a")
+    #|task(id="root:build", node="root", cmd="build", needs=[], required=env.get("MODE") == "prod" and len(env.keys()) == 1 and ["a", "b", "a"].count("a") == 2 and "x/y".split("/")[1] == "y" and "  x  ".strip() == "x" and "  x".lstrip() == "x" and "x  ".rstrip() == "x")
+    #|entrypoint(targets=["root:build"])
+  let parsed = parse(src)
+  assert_eq(parsed.errors.length(), 0)
+  assert_eq(parsed.ir.name, "root-build")
+  assert_eq(parsed.ir.nodes.length(), 1)
+  assert_eq(parsed.ir.nodes[0].required, true)
+  assert_eq(parsed.ir.tasks.length(), 1)
+  assert_eq(parsed.ir.tasks[0].required, true)
+}
+
+///|
+test "workflow engine: starlark method call reports invalid usage" {
+  let src =
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[], required="x".startswith())
+    #|task(id="root:build", node="root", cmd="build", needs=[], required=["a"].unknown())
+    #|entrypoint(targets=["root:build"])
+  let parsed = parse(src)
+  let text = parsed.errors.join("\n")
+  assert_true(text.contains("startswith() expects exactly 1 argument"))
+  assert_true(text.contains("unknown list method: unknown"))
+}
+
+///|
+test "workflow engine: starlark string method call reports invalid args" {
+  let src =
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[], required="x".replace("-", ":", -1) == "x")
+    #|task(id="root:build", node="root", cmd="build", needs=[], required=" x ".strip(1) == "x")
+    #|entrypoint(targets=["root:build"])
+  let parsed = parse(src)
+  let text = parsed.errors.join("\n")
+  assert_true(text.contains("replace() count must be non-negative int"))
+  assert_true(text.contains("strip() expects string argument when provided"))
+}
+
+///|
+test "workflow engine: starlark compatibility supports startswith and endswith helper calls" {
+  let src =
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[], required=startswith("workflow", "work") and endswith("workflow", "flow"))
+    #|task(id="root:build", node="root", cmd="build", needs=[], required=startswith("root:build", "root:") and not endswith("root:build", ":test"))
+    #|entrypoint(targets=["root:build"])
+  let parsed = parse(src)
+  assert_eq(parsed.errors.length(), 0)
+  assert_eq(parsed.ir.nodes.length(), 1)
+  assert_eq(parsed.ir.nodes[0].required, true)
+  assert_eq(parsed.ir.tasks.length(), 1)
+  assert_eq(parsed.ir.tasks[0].required, true)
+}
+
+///|
+test "workflow engine: starlark startswith and endswith report invalid args" {
+  let src =
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[], required=startswith("x"))
+    #|task(id="root:build", node="root", cmd="build", needs=[], required=endswith(1, "1"))
+    #|entrypoint(targets=["root:build"])
+  let parsed = parse(src)
+  let text = parsed.errors.join("\n")
+  assert_true(text.contains("startswith() expects exactly 2 arguments"))
+  assert_true(text.contains("endswith() expects string arguments"))
+}
+
+///|
+test "workflow engine: starlark not applies to comparison expression" {
+  let src =
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[], required=not "x" == "x")
+    #|task(id="root:build", node="root", cmd="build", needs=[])
+    #|entrypoint(targets=["root:build"])
+  let parsed = parse(src)
+  assert_eq(parsed.errors.length(), 0)
+  assert_eq(parsed.ir.nodes.length(), 1)
+  assert_eq(parsed.ir.nodes[0].required, false)
+}
+
+///|
+test "workflow engine: starlark compatibility supports conditional expression" {
+  let src =
+    #|mode = "prod"
+    #|workflow(name=("ci-prod" if mode == "prod" else "ci-dev"))
+    #|node(id="root", depends_on=[], required=(True if mode == "prod" else False))
+    #|task(id="root:build", node="root", cmd="build", needs=[], required=(False if mode == "prod" else True))
+    #|entrypoint(targets=["root:build"])
+  let parsed = parse(src)
+  assert_eq(parsed.errors.length(), 0)
+  assert_eq(parsed.ir.name, "ci-prod")
+  assert_eq(parsed.ir.nodes.length(), 1)
+  assert_eq(parsed.ir.nodes[0].required, true)
+  assert_eq(parsed.ir.tasks.length(), 1)
+  assert_eq(parsed.ir.tasks[0].required, false)
+}
+
+///|
+test "workflow engine: starlark conditional expression evaluates only selected branch" {
+  let src =
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[], required=(True if True else missing_ref))
+    #|task(id="root:build", node="root", cmd="build", needs=[], required=(False if False else True))
+    #|entrypoint(targets=["root:build"])
+  let parsed = parse(src)
+  assert_eq(parsed.errors.length(), 0)
+  assert_eq(parsed.ir.nodes.length(), 1)
+  assert_eq(parsed.ir.nodes[0].required, true)
+  assert_eq(parsed.ir.tasks.length(), 1)
+  assert_eq(parsed.ir.tasks[0].required, true)
+}
+
+///|
+test "workflow engine: starlark conditional expression requires else clause" {
+  let src =
+    #|workflow(name=("ci" if True))
+  let parsed = parse(src)
+  let text = parsed.errors.join("\n")
+  assert_true(text.contains("expected 'else' in conditional expression"))
+}
+
+///|
+test "workflow engine: starlark compatibility supports unary minus expression" {
+  let src =
+    #|n = 1
+    #|workflow(name="ci", max_parallel=3 + -n)
+    #|node(id="root", depends_on=[], required=(-n < 0))
+    #|task(id="root:build", node="root", cmd="build", needs=[], required=(-(1 + 1) < 0))
+    #|entrypoint(targets=["root:build"])
+  let parsed = parse(src)
+  assert_eq(parsed.errors.length(), 0)
+  assert_eq(parsed.ir.max_parallel, 2)
+  assert_eq(parsed.ir.nodes.length(), 1)
+  assert_eq(parsed.ir.nodes[0].required, true)
+  assert_eq(parsed.ir.tasks.length(), 1)
+  assert_eq(parsed.ir.tasks[0].required, true)
+}
+
+///|
+test "workflow engine: starlark unary minus requires int operand" {
+  let src =
+    #|workflow(name="ci", max_parallel=-"x")
+  let parsed = parse(src)
+  let text = parsed.errors.join("\n")
+  assert_true(text.contains("'-' requires int operand"))
+}
+
+///|
 test "workflow engine: starlark semantics rejects unknown keyword argument" {
   let src =
     #|workflow(name="ci", unknown=1)
@@ -1145,6 +2781,83 @@ test "workflow engine: starlark-go chunked errors subset is executable" {
     match expected {
       Some(msg) => assert_true(parsed.errors.join("\n").contains(msg))
       None => assert_eq(parsed.errors.length(), 0)
+    }
+  }
+}
+
+///|
+test "workflow engine: execution fixtures validate runtime result contracts" {
+  let fixture_text = execution_fixtures()
+  let source_marker = expected_execution_fixture_source_marker()
+  assert_true(fixture_text.contains(source_marker))
+  let cases = parse_execution_fixture_cases(fixture_text)
+  assert_eq(cases.length(), 23)
+
+  for case in cases {
+    assert_true(case.name.length() > 0)
+    assert_true(case.expect_ok is Some(_))
+    assert_true(case.expect_state is Some(_))
+    let parsed = parse(case.source)
+    assert_eq(parsed.errors.length(), 0)
+
+    let runner = mock_task_runner(
+      case.scenarios,
+      default_ok=case.runner_default_ok.unwrap_or(true),
+      default_message=case.runner_default_message.unwrap_or(""),
+    )
+    let result = execute_ir(parsed.ir, runner.run)
+
+    assert_eq(result.ok, case.expect_ok.unwrap_or(false))
+    assert_eq(result.state, case.expect_state.unwrap_or(""))
+    assert_eq(result.order.join(","), case.expect_order.join(","))
+    assert_eq(result.issues.length(), 0)
+
+    let actual_steps : Array[String] = []
+    for step in result.steps {
+      actual_steps.push(step.id + ":" + step.status)
+    }
+    assert_eq(actual_steps.join(","), case.expect_steps.join(","))
+  }
+}
+
+///|
+test "workflow engine: invalid execution fixtures validate ir issue contracts" {
+  let fixture_text = invalid_execution_fixtures()
+  let source_marker = expected_invalid_execution_fixture_source_marker()
+  assert_true(fixture_text.contains(source_marker))
+  let cases = parse_execution_fixture_cases(fixture_text)
+  assert_eq(cases.length(), 11)
+
+  for case in cases {
+    assert_true(case.name.length() > 0)
+    assert_true(case.expect_ok is Some(_))
+    assert_true(case.expect_state is Some(_))
+    let parsed = parse(case.source)
+    assert_eq(parsed.errors.length(), 0)
+
+    let runner = mock_task_runner(
+      case.scenarios,
+      default_ok=case.runner_default_ok.unwrap_or(true),
+      default_message=case.runner_default_message.unwrap_or(""),
+    )
+    let result = execute_ir(parsed.ir, runner.run)
+
+    assert_eq(result.ok, case.expect_ok.unwrap_or(true))
+    assert_eq(result.state, case.expect_state.unwrap_or(""))
+    assert_eq(result.order.join(","), case.expect_order.join(","))
+
+    let actual_steps : Array[String] = []
+    for step in result.steps {
+      actual_steps.push(step.id + ":" + step.status)
+    }
+    assert_eq(actual_steps.join(","), case.expect_steps.join(","))
+
+    let issues_text = result.issues.join("\n")
+    for expected in case.expect_issues_contains {
+      assert_true(issues_text.contains(expected))
+    }
+    if case.expect_issues_count is Some(expected_count) {
+      assert_eq(result.issues.length(), expected_count)
     }
   }
 }

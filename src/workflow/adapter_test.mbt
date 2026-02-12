@@ -246,7 +246,7 @@ test "workflow adapter: none fs cannot write report" {
 ///|
 test "workflow adapter: starlark load() merges external files from fs" {
   let root_src =
-    #|load("defs/common.star")
+    #|load("defs/common.star", "shared_nodes", task_alias="shared_task")
     #|workflow(name="ci")
     #|node(id="root", depends_on=[])
     #|task(id="root:build", node="root", cmd="build", needs=[])
@@ -330,7 +330,7 @@ test "workflow adapter: starlark load() rejects path outside workspace root" {
 }
 
 ///|
-test "workflow adapter: starlark load() validates unknown arg via builtin schema" {
+test "workflow adapter: starlark load() requires path as first argument" {
   let root_src =
     #|load(src="defs/common.star")
     #|workflow(name="ci")
@@ -345,6 +345,7 @@ test "workflow adapter: starlark load() validates unknown arg via builtin schema
   )
   let parsed = parse_from_fs("workflow.star", adapter)
   let text = parsed.errors.join("\n")
-  assert_true(text.contains("unknown argument 'src' for load"))
-  assert_true(text.contains("load.path is required"))
+  assert_true(
+    text.contains("load() first argument must be string path or path=\"...\""),
+  )
 }

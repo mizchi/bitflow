@@ -1,4 +1,8 @@
 ///|
+// Host-level workflow semantics and IR lowering.
+// Language-core expression evaluation is in lang_core.mbt.
+
+///|
 pub struct StarlarkNodeDecl {
   id : String
   depends_on : Array[String]
@@ -66,45 +70,6 @@ fn arg_map(
 }
 
 ///|
-fn resolve_value(
-  value : StarlarkValue,
-  bindings : Map[String, StarlarkValue],
-  line : Int,
-  column : Int,
-  errors : Array[String],
-) -> StarlarkValue? {
-  match value {
-    Ref(name) =>
-      match bindings.get(name) {
-        Some(bound) => resolve_value(bound, bindings, line, column, errors)
-        None => {
-          semantic_error(errors, line, column, "unknown variable '\{name}'")
-          None
-        }
-      }
-    List(values) => {
-      let resolved : Array[StarlarkValue] = []
-      for item in values {
-        match resolve_value(item, bindings, line, column, errors) {
-          Some(value) => resolved.push(value)
-          None => return None
-        }
-      }
-      Some(List(resolved))
-    }
-    Dict(values) => {
-      let resolved : Map[String, StarlarkValue] = {}
-      for key, item in values {
-        match resolve_value(item, bindings, line, column, errors) {
-          Some(value) => resolved[key] = value
-          None => return None
-        }
-      }
-      Some(Dict(resolved))
-    }
-    _ => Some(value)
-  }
-}
 
 ///|
 fn arg_map_resolved(
@@ -461,6 +426,7 @@ fn value_matches_type(value : StarlarkValue, typ : String) -> Bool {
     Str(_) => typ == "string"
     Num(_) => typ == "int"
     Bool(_) => typ == "bool"
+    NoneValue => false
     List(items) => {
       if typ != "string_list" {
         return false
@@ -486,6 +452,28 @@ fn value_matches_type(value : StarlarkValue, typ : String) -> Bool {
       true
     }
     Ref(_) => false
+    MethodCall(_, _, _) => false
+    Call(_, _) => false
+    Slice(_, _, _) => false
+    Index(_, _) => false
+    Neg(_) => false
+    Add(_, _) => false
+    Sub(_, _) => false
+    Mul(_, _) => false
+    FloorDiv(_, _) => false
+    Mod(_, _) => false
+    Eq(_, _) => false
+    NotEq(_, _) => false
+    Lt(_, _) => false
+    Lte(_, _) => false
+    Gt(_, _) => false
+    Gte(_, _) => false
+    In(_, _) => false
+    NotIn(_, _) => false
+    Not(_) => false
+    And(_, _) => false
+    Or(_, _) => false
+    IfExpr(_, _, _) => false
   }
 }
 
@@ -495,6 +483,7 @@ fn infer_var_type(value : StarlarkValue) -> String {
     Str(_) => "string"
     Num(_) => "int"
     Bool(_) => "bool"
+    NoneValue => "any"
     List(items) => {
       for item in items {
         match item {
@@ -514,6 +503,28 @@ fn infer_var_type(value : StarlarkValue) -> String {
       "string_dict"
     }
     Ref(_) => "any"
+    MethodCall(_, _, _) => "any"
+    Call(_, _) => "any"
+    Slice(_, _, _) => "any"
+    Index(_, _) => "any"
+    Neg(_) => "any"
+    Add(_, _) => "any"
+    Sub(_, _) => "any"
+    Mul(_, _) => "any"
+    FloorDiv(_, _) => "any"
+    Mod(_, _) => "any"
+    Eq(_, _) => "any"
+    NotEq(_, _) => "any"
+    Lt(_, _) => "any"
+    Lte(_, _) => "any"
+    Gt(_, _) => "any"
+    Gte(_, _) => "any"
+    In(_, _) => "any"
+    NotIn(_, _) => "any"
+    Not(_) => "any"
+    And(_, _) => "any"
+    Or(_, _) => "any"
+    IfExpr(_, _, _) => "any"
   }
 }
 
