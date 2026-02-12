@@ -88,13 +88,16 @@ The implementation is organized in three layers:
   `workflow`, `node`, `task` (`target` alias), `entrypoint`, `var`, `config`,
   `load`.
 - **Literal / collection expressions**:
-  `string`, `int`, `bool`, `None`, `list`, `dict`, `tuple`.
+  `string`, `int`, `bool`, `None`, `list`, `dict`, `tuple`, and list
+  comprehensions (`[expr for x in iter if cond]`) / dict comprehensions
+  (`{k: v for x in iter if cond}`).
 - **Operators**:
   arithmetic (`+`, `-`, `*`, `//`, `%`), logical (`and`, `or`, `not`),
   comparisons (`==`, `!=`, `<`, `<=`, `>`, `>=`), chained comparisons,
   membership (`in`, `not in`), conditional expression (`a if cond else b`).
 - **Access / call expressions**:
-  indexing, slicing, helper-function calls, selected method-call syntax.
+  indexing, slicing (`start:end[:step]`), helper-function calls, selected
+  method-call syntax.
 - **Practical compatibility**:
   semicolon-separated calls, trailing commas, single quotes.
   Control statements support both inline and indented block suites:
@@ -104,7 +107,7 @@ The implementation is organized in three layers:
 
 ### Out of Scope (Not Full Starlark VM)
 
-- Comprehensions, exceptions, lambdas, and mutable runtime objects.
+- Set comprehensions, exceptions, lambdas, and mutable runtime objects.
 - General-purpose module system; `load` is constrained for workflow files
   (`parse_from_fs*` path only, workspace-root bounded).
 - Arbitrary host side effects during evaluation; execution side effects are

@@ -2750,6 +2750,37 @@ test "workflow engine: starlark slice expression reports invalid bounds" {
 }
 
 ///|
+test "workflow engine: starlark compatibility supports slice step expressions" {
+  let src =
+    #|labels = ["a", "b", "c", "d", "e"]
+    #|word = "workflow"
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[], required=labels[::2] == ["a", "c", "e"] and labels[1:5:2] == ["b", "d"])
+    #|task(id="root:build", node="root", cmd="build", needs=[], required=word[::2] == "wrfo" and word[6:1:-2] == "ofr")
+    #|entrypoint(targets=["root:build"])
+  let parsed = parse(src)
+  assert_eq(parsed.errors.length(), 0)
+  assert_eq(parsed.ir.nodes.length(), 1)
+  assert_eq(parsed.ir.nodes[0].required, true)
+  assert_eq(parsed.ir.tasks.length(), 1)
+  assert_eq(parsed.ir.tasks[0].required, true)
+}
+
+///|
+test "workflow engine: starlark slice step reports invalid usage" {
+  let src =
+    #|items = ["a", "b", "c"]
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[], required=items[::0] == ["a"])
+    #|task(id="root:build", node="root", cmd="build", needs=[], required="abc"[::"2"] == "ac")
+    #|entrypoint(targets=["root:build"])
+  let parsed = parse(src)
+  let text = parsed.errors.join("\n")
+  assert_true(text.contains("slice step cannot be 0"))
+  assert_true(text.contains("slice step must be int"))
+}
+
+///|
 test "workflow engine: starlark compatibility supports expression helper calls" {
   let src =
     #|labels = ["build", "test"]
@@ -3092,6 +3123,66 @@ test "workflow engine: starlark sum and product report invalid args" {
   let text = parsed.errors.join("\n")
   assert_true(text.contains("sum() expects at least 1 argument"))
   assert_true(text.contains("product() expects int arguments or [int]"))
+}
+
+///|
+test "workflow engine: starlark compatibility supports list comprehensions" {
+  let src =
+    #|def plus_one(x):
+    #|  return x + 1
+    #|nums = [1, 2, 3, 4]
+    #|mapped = [plus_one(n) for n in nums if n > 2]
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[], required=len(mapped) == 2 and mapped[0] == 4 and mapped[1] == 5)
+    #|task(id="root:build", node="root", cmd="build", needs=[])
+    #|entrypoint(targets=["root:build"])
+  let parsed = parse(src)
+  assert_eq(parsed.errors.length(), 0)
+  assert_eq(parsed.ir.nodes.length(), 1)
+  assert_eq(parsed.ir.nodes[0].required, true)
+}
+
+///|
+test "workflow engine: starlark list comprehension reports invalid iterable" {
+  let src =
+    #|bad = [x for x in 1]
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[])
+    #|task(id="root:build", node="root", cmd="build", needs=[])
+    #|entrypoint(targets=["root:build"])
+  let parsed = parse(src)
+  let text = parsed.errors.join("\n")
+  assert_true(text.contains("list comprehension iterable must be iterable"))
+}
+
+///|
+test "workflow engine: starlark compatibility supports dict comprehensions" {
+  let src =
+    #|nums = [1, 2, 3]
+    #|mapped = {str(n): n * 10 for n in nums if n >= 2}
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[], required=len(mapped) == 2 and mapped["2"] == 20 and mapped["3"] == 30 and mapped.get("1") == None)
+    #|task(id="root:build", node="root", cmd="build", needs=[])
+    #|entrypoint(targets=["root:build"])
+  let parsed = parse(src)
+  assert_eq(parsed.errors.length(), 0)
+  assert_eq(parsed.ir.nodes.length(), 1)
+  assert_eq(parsed.ir.nodes[0].required, true)
+}
+
+///|
+test "workflow engine: starlark dict comprehension reports invalid iterable and key type" {
+  let src =
+    #|bad_iter = {str(x): x for x in 1}
+    #|bad_key = {x: x for x in [1]}
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[], required=len(bad_iter) == 0 and len(bad_key) == 0)
+    #|task(id="root:build", node="root", cmd="build", needs=[])
+    #|entrypoint(targets=["root:build"])
+  let parsed = parse(src)
+  let text = parsed.errors.join("\n")
+  assert_true(text.contains("dict comprehension iterable must be iterable"))
+  assert_true(text.contains("dict comprehension key must evaluate to string"))
 }
 
 ///|

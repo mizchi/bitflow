@@ -84,11 +84,13 @@ fn is_positional_arg_name(name : String) -> Bool {
 }
 
 ///|
-fn iterable_values_for_for_loop(
+fn iterable_values_for_context(
   value : StarlarkValue,
   line : Int,
   column : Int,
   errors : Array[String],
+  owner : String,
+  call_stack? : Array[String] = [],
 ) -> Array[StarlarkValue]? {
   match value {
     List(items) => Some(items)
@@ -107,8 +109,12 @@ fn iterable_values_for_for_loop(
       Some(chars)
     }
     _ => {
-      semantic_error(
-        errors, line, column, "for.iter must be iterable (list, dict, or string)",
+      semantic_error_with_stack(
+        errors,
+        line,
+        column,
+        "\{owner} must be iterable (list, dict, or string)",
+        call_stack,
       )
       None
     }
@@ -374,6 +380,136 @@ fn resolve_value_with_functions(
           }
       }
     }
+    ListComp(item_expr, loop_name, iter_expr, cond_expr) => {
+      let resolved_iter = match
+        resolve_value_with_functions(
+          iter_expr, bindings, functions, line, column, errors, call_stack~,
+        ) {
+        Some(value) => value
+        None => return None
+      }
+      let iter_items = match
+        iterable_values_for_context(
+          resolved_iter,
+          line,
+          column,
+          errors,
+          "list comprehension iterable",
+          call_stack~,
+        ) {
+        Some(items) => items
+        None => return None
+      }
+      let resolved_items : Array[StarlarkValue] = []
+      for iter_item in iter_items {
+        let local_bindings = copy_bindings(bindings)
+        local_bindings[loop_name] = iter_item
+        let should_include = match cond_expr {
+          Some(cond_value) =>
+            match
+              resolve_value_with_functions(
+                cond_value,
+                local_bindings,
+                functions,
+                line,
+                column,
+                errors,
+                call_stack~,
+              ) {
+              Some(cond_result) => value_truthy(cond_result)
+              None => return None
+            }
+          None => true
+        }
+        if not(should_include) {
+          continue
+        }
+        match
+          resolve_value_with_functions(
+            item_expr, local_bindings, functions, line, column, errors,
+            call_stack~,
+          ) {
+          Some(resolved_item) => resolved_items.push(resolved_item)
+          None => return None
+        }
+      }
+      Some(List(resolved_items))
+    }
+    DictComp(key_expr, value_expr, loop_name, iter_expr, cond_expr) => {
+      let resolved_iter = match
+        resolve_value_with_functions(
+          iter_expr, bindings, functions, line, column, errors, call_stack~,
+        ) {
+        Some(value) => value
+        None => return None
+      }
+      let iter_items = match
+        iterable_values_for_context(
+          resolved_iter,
+          line,
+          column,
+          errors,
+          "dict comprehension iterable",
+          call_stack~,
+        ) {
+        Some(items) => items
+        None => return None
+      }
+      let resolved_items : Map[String, StarlarkValue] = {}
+      for iter_item in iter_items {
+        let local_bindings = copy_bindings(bindings)
+        local_bindings[loop_name] = iter_item
+        let should_include = match cond_expr {
+          Some(cond_value) =>
+            match
+              resolve_value_with_functions(
+                cond_value,
+                local_bindings,
+                functions,
+                line,
+                column,
+                errors,
+                call_stack~,
+              ) {
+              Some(cond_result) => value_truthy(cond_result)
+              None => return None
+            }
+          None => true
+        }
+        if not(should_include) {
+          continue
+        }
+        let resolved_key = match
+          resolve_value_with_functions(
+            key_expr, local_bindings, functions, line, column, errors, call_stack~,
+          ) {
+          Some(value) => value
+          None => return None
+        }
+        let key = match resolved_key {
+          Str(text) => text
+          _ => {
+            semantic_error_with_stack(
+              errors,
+              line,
+              column,
+              "dict comprehension key must evaluate to string",
+              call_stack,
+            )
+            return None
+          }
+        }
+        match
+          resolve_value_with_functions(
+            value_expr, local_bindings, functions, line, column, errors,
+            call_stack~,
+          ) {
+          Some(resolved_value) => resolved_items[key] = resolved_value
+          None => return None
+        }
+      }
+      Some(Dict(resolved_items))
+    }
     CallKwArg(_, _) => {
       semantic_error_with_stack(
         errors, line, column, "keyword argument is only allowed inside function calls",
@@ -381,7 +517,7 @@ fn resolve_value_with_functions(
       )
       None
     }
-    Slice(target, start, end) =>
+    Slice(target, start, end, step) =>
       match
         resolve_value_with_functions(
           target, bindings, functions, line, column, errors, call_stack~,
@@ -409,8 +545,20 @@ fn resolve_value_with_functions(
               }
             None => None
           }
+          let resolved_step = match step {
+            Some(expr) =>
+              match
+                resolve_value_with_functions(
+                  expr, bindings, functions, line, column, errors, call_stack~,
+                ) {
+                Some(v) => Some(v)
+                None => return None
+              }
+            None => None
+          }
           resolve_slice(
-            resolved_target, resolved_start, resolved_end, line, column, errors,
+            resolved_target, resolved_start, resolved_end, resolved_step, line, column,
+            errors,
           )
         }
         None => None
@@ -1216,11 +1364,13 @@ fn value_matches_type(value : StarlarkValue, typ : String) -> Bool {
       }
       true
     }
+    ListComp(_, _, _, _) => false
+    DictComp(_, _, _, _, _) => false
     Ref(_) => false
     MethodCall(_, _, _) => false
     CallKwArg(_, _) => false
     Call(_, _) => false
-    Slice(_, _, _) => false
+    Slice(_, _, _, _) => false
     Index(_, _) => false
     Neg(_) => false
     Add(_, _) => false
@@ -1268,11 +1418,13 @@ fn infer_var_type(value : StarlarkValue) -> String {
       }
       "string_dict"
     }
+    ListComp(_, _, _, _) => "any"
+    DictComp(_, _, _, _, _) => "any"
     Ref(_) => "any"
     MethodCall(_, _, _) => "any"
     CallKwArg(_, _) => "any"
     Call(_, _) => "any"
-    Slice(_, _, _) => "any"
+    Slice(_, _, _, _) => "any"
     Index(_, _) => "any"
     Neg(_) => "any"
     Add(_, _) => "any"
@@ -1781,8 +1933,13 @@ fn apply_calls(
         match iterable {
           Some(iter_value) =>
             match
-              iterable_values_for_for_loop(
-                iter_value, iter_line, iter_col, errors,
+              iterable_values_for_context(
+                iter_value,
+                iter_line,
+                iter_col,
+                errors,
+                "for.iter",
+                call_stack~,
               ) {
               Some(items) => {
                 let nested = parse_syntax(body_source)

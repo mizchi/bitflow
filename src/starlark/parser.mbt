@@ -5,11 +5,13 @@ priv enum StarlarkValue {
   Bool(Bool)
   NoneValue
   List(Array[StarlarkValue])
+  ListComp(StarlarkValue, String, StarlarkValue, StarlarkValue?)
   Dict(Map[String, StarlarkValue])
+  DictComp(StarlarkValue, StarlarkValue, String, StarlarkValue, StarlarkValue?)
   Ref(String)
   Neg(StarlarkValue)
   Index(StarlarkValue, StarlarkValue)
-  Slice(StarlarkValue, StarlarkValue?, StarlarkValue?)
+  Slice(StarlarkValue, StarlarkValue?, StarlarkValue?, StarlarkValue?)
   MethodCall(StarlarkValue, String, Array[StarlarkValue])
   CallKwArg(String, StarlarkValue)
   Call(String, Array[StarlarkValue])
@@ -371,26 +373,73 @@ fn StarlarkParser::parse_list(self : StarlarkParser) -> StarlarkValue? {
   if self.consume_char(']') {
     return Some(List(items))
   }
-  while true {
+  self.skip_value_space()
+  let first_item = match self.parse_value() {
+    Some(value) => value
+    None => {
+      self.recover_to_arg_boundary()
+      if self.consume_char(']') {
+        return Some(List(items))
+      }
+      return None
+    }
+  }
+  self.skip_value_space()
+  if self.consume_keyword("for") {
     self.skip_value_space()
-    match self.parse_value() {
-      Some(value) => items.push(value)
+    let loop_name = match self.parse_identifier() {
+      Some(name) => name
       None => {
-        self.recover_to_arg_boundary()
-        if self.consume_char(']') {
-          break
-        }
-        if self.consume_char(',') {
-          continue
-        }
-        break
+        self.push_error("list comprehension requires loop variable name")
+        return None
       }
     }
+    self.skip_value_space()
+    if not(self.consume_keyword("in")) {
+      self.push_error("list comprehension requires 'in'")
+      return None
+    }
+    self.skip_value_space()
+    let iter_expr = match self.parse_or_value() {
+      Some(value) => value
+      None => return None
+    }
+    self.skip_value_space()
+    let mut cond_expr : StarlarkValue? = None
+    if self.consume_keyword("if") {
+      self.skip_value_space()
+      cond_expr = self.parse_value()
+      if cond_expr is None {
+        return None
+      }
+      self.skip_value_space()
+    }
+    if not(self.consume_char(']')) {
+      self.push_error("expected ']' to close list comprehension")
+      return None
+    }
+    return Some(ListComp(first_item, loop_name, iter_expr, cond_expr))
+  }
+  items.push(first_item)
+  while true {
     self.skip_value_space()
     if self.consume_char(',') {
       self.skip_value_space()
       if self.consume_char(']') {
         break
+      }
+      match self.parse_value() {
+        Some(value) => items.push(value)
+        None => {
+          self.recover_to_arg_boundary()
+          if self.consume_char(']') {
+            break
+          }
+          if self.consume_char(',') {
+            continue
+          }
+          break
+        }
       }
       continue
     }
@@ -421,56 +470,130 @@ fn StarlarkParser::parse_dict(self : StarlarkParser) -> StarlarkValue? {
   if self.consume_char('}') {
     return Some(Dict(items))
   }
-  while true {
-    self.skip_value_space()
-    let key = match self.parse_string() {
-      Some(Str(text)) => text
-      _ => {
-        self.push_error("dict key must be string")
-        self.recover_to_arg_boundary()
-        if self.consume_char('}') {
-          break
-        }
-        if self.consume_char(',') {
-          continue
-        }
-        break
-      }
-    }
-
-    self.skip_value_space()
-    if not(self.consume_char(':')) {
-      self.push_error("expected ':' after dict key")
+  self.skip_value_space()
+  let first_key_expr = match self.parse_value() {
+    Some(value) => value
+    None => {
       self.recover_to_arg_boundary()
       if self.consume_char('}') {
-        break
+        return Some(Dict(items))
       }
-      if self.consume_char(',') {
-        continue
-      }
-      break
+      return None
     }
+  }
 
+  self.skip_value_space()
+  if not(self.consume_char(':')) {
+    self.push_error("expected ':' after dict key")
+    self.recover_to_arg_boundary()
+    if self.consume_char('}') {
+      return Some(Dict(items))
+    }
+    return None
+  }
+
+  self.skip_value_space()
+  let first_value_expr = match self.parse_value() {
+    Some(value) => value
+    None => {
+      self.recover_to_arg_boundary()
+      if self.consume_char('}') {
+        return Some(Dict(items))
+      }
+      return None
+    }
+  }
+
+  self.skip_value_space()
+  if self.consume_keyword("for") {
     self.skip_value_space()
-    match self.parse_value() {
-      Some(value) => items[key] = value
+    let loop_name = match self.parse_identifier() {
+      Some(name) => name
       None => {
-        self.recover_to_arg_boundary()
-        if self.consume_char('}') {
-          break
-        }
-        if self.consume_char(',') {
-          continue
-        }
-        break
+        self.push_error("dict comprehension requires loop variable name")
+        return None
       }
     }
-
     self.skip_value_space()
+    if not(self.consume_keyword("in")) {
+      self.push_error("dict comprehension requires 'in'")
+      return None
+    }
+    self.skip_value_space()
+    let iter_expr = match self.parse_or_value() {
+      Some(value) => value
+      None => return None
+    }
+    self.skip_value_space()
+    let mut cond_expr : StarlarkValue? = None
+    if self.consume_keyword("if") {
+      self.skip_value_space()
+      cond_expr = self.parse_value()
+      if cond_expr is None {
+        return None
+      }
+      self.skip_value_space()
+    }
+    if not(self.consume_char('}')) {
+      self.push_error("expected '}' to close dict comprehension")
+      return None
+    }
+    return Some(
+      DictComp(first_key_expr, first_value_expr, loop_name, iter_expr, cond_expr),
+    )
+  }
+
+  match first_key_expr {
+    Str(text) => items[text] = first_value_expr
+    _ => self.push_error("dict key must be string")
+  }
+  while true {
     if self.consume_char(',') {
       self.skip_value_space()
       if self.consume_char('}') {
         break
+      }
+      let key = match self.parse_string() {
+        Some(Str(text)) => text
+        _ => {
+          self.push_error("dict key must be string")
+          self.recover_to_arg_boundary()
+          if self.consume_char('}') {
+            break
+          }
+          if self.consume_char(',') {
+            continue
+          }
+          break
+        }
+      }
+
+      self.skip_value_space()
+      if not(self.consume_char(':')) {
+        self.push_error("expected ':' after dict key")
+        self.recover_to_arg_boundary()
+        if self.consume_char('}') {
+          break
+        }
+        if self.consume_char(',') {
+          continue
+        }
+        break
+      }
+
+      self.skip_value_space()
+      match self.parse_value() {
+        Some(value) => items[key] = value
+        None => {
+          self.recover_to_arg_boundary()
+          if self.consume_char('}') {
+            break
+          }
+          if self.consume_char(',') {
+            continue
+          }
+          break
+        }
       }
       continue
     }
@@ -782,12 +905,25 @@ fn StarlarkParser::parse_postfix_value(self : StarlarkParser) -> StarlarkValue? 
         }
         return None
       }
+      let mut step_bound : StarlarkValue? = None
+      self.skip_value_space()
+      if self.consume_char(':') {
+        let (step_ok, parsed_step) = self.parse_slice_bound_optional()
+        if not(step_ok) {
+          self.skip_value_space()
+          if not(self.consume_char(']')) {
+            self.push_error("expected ']' to close slice expression")
+          }
+          return None
+        }
+        step_bound = parsed_step
+      }
       self.skip_value_space()
       if not(self.consume_char(']')) {
         self.push_error("expected ']' to close slice expression")
         return None
       }
-      value = Slice(value, None, end_bound)
+      value = Slice(value, None, end_bound, step_bound)
       continue
     }
 
@@ -811,12 +947,25 @@ fn StarlarkParser::parse_postfix_value(self : StarlarkParser) -> StarlarkValue? 
         }
         return None
       }
+      let mut step_bound : StarlarkValue? = None
+      self.skip_value_space()
+      if self.consume_char(':') {
+        let (step_ok, parsed_step) = self.parse_slice_bound_optional()
+        if not(step_ok) {
+          self.skip_value_space()
+          if not(self.consume_char(']')) {
+            self.push_error("expected ']' to close slice expression")
+          }
+          return None
+        }
+        step_bound = parsed_step
+      }
       self.skip_value_space()
       if not(self.consume_char(']')) {
         self.push_error("expected ']' to close slice expression")
         return None
       }
-      value = Slice(value, Some(first_part), end_bound)
+      value = Slice(value, Some(first_part), end_bound, step_bound)
       continue
     } else {
       if not(self.consume_char(']')) {
@@ -894,7 +1043,7 @@ fn StarlarkParser::parse_slice_bound_optional(
   self : StarlarkParser,
 ) -> (Bool, StarlarkValue?) {
   self.skip_value_space()
-  if self.peek() is Some(']') {
+  if self.peek() is Some(']') || self.peek() is Some(':') {
     return (true, None)
   }
   match self.parse_value() {

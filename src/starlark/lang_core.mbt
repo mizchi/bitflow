@@ -319,18 +319,6 @@ fn normalize_index(raw : Int, length : Int) -> Int {
   }
 }
 
-///|
-fn clamp_index(raw : Int, length : Int) -> Int {
-  if raw < 0 {
-    0
-  } else if raw > length {
-    length
-  } else {
-    raw
-  }
-}
-
-///|
 fn resolve_index(
   target : StarlarkValue,
   index : StarlarkValue,
@@ -397,26 +385,70 @@ fn resolve_index(
 }
 
 ///|
-fn resolve_slice_bound(
-  bound : StarlarkValue?,
-  default_value : Int,
-  label : String,
-  length : Int,
+fn resolve_slice_step(
+  step : StarlarkValue?,
   line : Int,
   column : Int,
   errors : Array[String],
 ) -> Int? {
-  match bound {
-    None => Some(default_value)
-    Some(Num(raw)) => {
-      let normalized = normalize_index(raw, length)
-      Some(clamp_index(normalized, length))
-    }
+  match step {
+    None => Some(1)
+    Some(Num(value)) =>
+      if value == 0 {
+        semantic_error(errors, line, column, "slice step cannot be 0")
+        None
+      } else {
+        Some(value)
+      }
     Some(_) => {
-      semantic_error(errors, line, column, label + " must be int")
+      semantic_error(errors, line, column, "slice step must be int")
       None
     }
   }
+}
+
+///|
+fn resolve_slice_bound_with_step(
+  bound : StarlarkValue?,
+  default_positive : Int,
+  default_negative : Int,
+  label : String,
+  length : Int,
+  step : Int,
+  line : Int,
+  column : Int,
+  errors : Array[String],
+) -> Int? {
+  let mut index = match bound {
+    None => if step > 0 { default_positive } else { default_negative }
+    Some(Num(raw)) => {
+      let mut normalized = raw
+      if normalized < 0 {
+        normalized += length
+      }
+      normalized
+    }
+    Some(_) => {
+      semantic_error(errors, line, column, label + " must be int")
+      return None
+    }
+  }
+  if step > 0 {
+    if index < 0 {
+      index = 0
+    }
+    if index > length {
+      index = length
+    }
+  } else {
+    if index < -1 {
+      index = -1
+    }
+    if index >= length {
+      index = length - 1
+    }
+  }
+  Some(index)
 }
 
 ///|
@@ -424,27 +456,59 @@ fn resolve_slice(
   target : StarlarkValue,
   start : StarlarkValue?,
   end : StarlarkValue?,
+  step : StarlarkValue?,
   line : Int,
   column : Int,
   errors : Array[String],
 ) -> StarlarkValue? {
+  let step_value = match resolve_slice_step(step, line, column, errors) {
+    Some(value) => value
+    None => return None
+  }
   match target {
     List(items) => {
       let len = items.length()
       let start_idx = match
-        resolve_slice_bound(start, 0, "slice start", len, line, column, errors) {
+        resolve_slice_bound_with_step(
+          start,
+          0,
+          len - 1,
+          "slice start",
+          len,
+          step_value,
+          line,
+          column,
+          errors,
+        ) {
         Some(v) => v
         None => return None
       }
       let end_idx = match
-        resolve_slice_bound(end, len, "slice end", len, line, column, errors) {
+        resolve_slice_bound_with_step(
+          end,
+          len,
+          -1,
+          "slice end",
+          len,
+          step_value,
+          line,
+          column,
+          errors,
+        ) {
         Some(v) => v
         None => return None
       }
       let result : Array[StarlarkValue] = []
-      if start_idx < end_idx {
-        for i in start_idx..<end_idx {
-          result.push(items[i])
+      let mut idx = start_idx
+      if step_value > 0 {
+        while idx < end_idx {
+          result.push(items[idx])
+          idx += step_value
+        }
+      } else {
+        while idx > end_idx {
+          result.push(items[idx])
+          idx += step_value
         }
       }
       Some(List(result))
@@ -452,20 +516,49 @@ fn resolve_slice(
     Str(text) => {
       let len = text.length()
       let start_idx = match
-        resolve_slice_bound(start, 0, "slice start", len, line, column, errors) {
+        resolve_slice_bound_with_step(
+          start,
+          0,
+          len - 1,
+          "slice start",
+          len,
+          step_value,
+          line,
+          column,
+          errors,
+        ) {
         Some(v) => v
         None => return None
       }
       let end_idx = match
-        resolve_slice_bound(end, len, "slice end", len, line, column, errors) {
+        resolve_slice_bound_with_step(
+          end,
+          len,
+          -1,
+          "slice end",
+          len,
+          step_value,
+          line,
+          column,
+          errors,
+        ) {
         Some(v) => v
         None => return None
       }
-      if start_idx >= end_idx {
-        Some(Str(""))
+      let parts : Array[String] = []
+      let mut idx = start_idx
+      if step_value > 0 {
+        while idx < end_idx {
+          parts.push(String::unsafe_substring(text, start=idx, end=idx + 1))
+          idx += step_value
+        }
       } else {
-        Some(Str(String::unsafe_substring(text, start=start_idx, end=end_idx)))
+        while idx > end_idx {
+          parts.push(String::unsafe_substring(text, start=idx, end=idx + 1))
+          idx += step_value
+        }
       }
+      Some(Str(parts.join("")))
     }
     _ => {
       semantic_error(
@@ -1564,6 +1657,53 @@ fn value_truthy(value : StarlarkValue) -> Bool {
 }
 
 ///|
+fn copy_expr_bindings(
+  source : Map[String, StarlarkValue],
+) -> Map[String, StarlarkValue] {
+  let copied : Map[String, StarlarkValue] = {}
+  for key, value in source {
+    copied[key] = value
+  }
+  copied
+}
+
+///|
+fn iterable_items_for_comprehension(
+  value : StarlarkValue,
+  line : Int,
+  column : Int,
+  errors : Array[String],
+  owner : String,
+) -> Array[StarlarkValue]? {
+  match value {
+    List(items) => Some(items)
+    Dict(entries) => {
+      let keys : Array[StarlarkValue] = []
+      for key, _ in entries {
+        keys.push(Str(key))
+      }
+      Some(keys)
+    }
+    Str(text) => {
+      let chars : Array[StarlarkValue] = []
+      for i in 0..<text.length() {
+        chars.push(Str(String::unsafe_substring(text, start=i, end=i + 1)))
+      }
+      Some(chars)
+    }
+    _ => {
+      semantic_error(
+        errors,
+        line,
+        column,
+        "\{owner} must be iterable (list, dict, or string)",
+      )
+      None
+    }
+  }
+}
+
+///|
 fn resolve_value(
   value : StarlarkValue,
   bindings : Map[String, StarlarkValue],
@@ -1599,7 +1739,102 @@ fn resolve_value(
       }
       resolve_expr_call(name, resolved_args, line, column, errors)
     }
-    Slice(target, start, end) =>
+    ListComp(item_expr, loop_name, iter_expr, cond_expr) => {
+      let resolved_iter = match
+        resolve_value(iter_expr, bindings, line, column, errors) {
+        Some(value) => value
+        None => return None
+      }
+      let iter_items = match
+        iterable_items_for_comprehension(
+          resolved_iter,
+          line,
+          column,
+          errors,
+          "list comprehension iterable",
+        ) {
+        Some(items) => items
+        None => return None
+      }
+      let resolved_items : Array[StarlarkValue] = []
+      for iter_item in iter_items {
+        let local_bindings = copy_expr_bindings(bindings)
+        local_bindings[loop_name] = iter_item
+        let should_include = match cond_expr {
+          Some(cond_value) =>
+            match resolve_value(cond_value, local_bindings, line, column, errors) {
+              Some(cond_result) => value_truthy(cond_result)
+              None => return None
+            }
+          None => true
+        }
+        if not(should_include) {
+          continue
+        }
+        match resolve_value(item_expr, local_bindings, line, column, errors) {
+          Some(resolved_item) => resolved_items.push(resolved_item)
+          None => return None
+        }
+      }
+      Some(List(resolved_items))
+    }
+    DictComp(key_expr, value_expr, loop_name, iter_expr, cond_expr) => {
+      let resolved_iter = match
+        resolve_value(iter_expr, bindings, line, column, errors) {
+        Some(value) => value
+        None => return None
+      }
+      let iter_items = match
+        iterable_items_for_comprehension(
+          resolved_iter,
+          line,
+          column,
+          errors,
+          "dict comprehension iterable",
+        ) {
+        Some(items) => items
+        None => return None
+      }
+      let resolved_items : Map[String, StarlarkValue] = {}
+      for iter_item in iter_items {
+        let local_bindings = copy_expr_bindings(bindings)
+        local_bindings[loop_name] = iter_item
+        let should_include = match cond_expr {
+          Some(cond_value) =>
+            match resolve_value(cond_value, local_bindings, line, column, errors) {
+              Some(cond_result) => value_truthy(cond_result)
+              None => return None
+            }
+          None => true
+        }
+        if not(should_include) {
+          continue
+        }
+        let resolved_key = match
+          resolve_value(key_expr, local_bindings, line, column, errors) {
+          Some(value) => value
+          None => return None
+        }
+        let key = match resolved_key {
+          Str(text) => text
+          _ => {
+            semantic_error(
+              errors,
+              line,
+              column,
+              "dict comprehension key must evaluate to string",
+            )
+            return None
+          }
+        }
+        match resolve_value(value_expr, local_bindings, line, column, errors) {
+          Some(resolved_value) => resolved_items[key] = resolved_value
+          None => return None
+        }
+      }
+      Some(Dict(resolved_items))
+    }
+    Slice(target, start, end, step) =>
       match resolve_value(target, bindings, line, column, errors) {
         Some(resolved_target) => {
           let resolved_start = match start {
@@ -1618,8 +1853,17 @@ fn resolve_value(
               }
             None => None
           }
+          let resolved_step = match step {
+            Some(expr) =>
+              match resolve_value(expr, bindings, line, column, errors) {
+                Some(v) => Some(v)
+                None => return None
+              }
+            None => None
+          }
           resolve_slice(
-            resolved_target, resolved_start, resolved_end, line, column, errors,
+            resolved_target, resolved_start, resolved_end, resolved_step, line, column,
+            errors,
           )
         }
         None => None
