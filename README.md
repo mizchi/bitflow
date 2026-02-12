@@ -91,6 +91,11 @@ let ordered = @wf.topological_nodes(nodes)
 let issues = @wf.graph_issues(nodes)
 ```
 
+## Examples
+
+- dependency analysis workflow sample:
+  `examples/dependency-analysis/README.md`
+
 ## License
 
 Apache-2.0
