@@ -283,3 +283,14 @@ entrypoint(targets=["n:opt", "n:req"])
 # expect.state=completed
 # expect.order=n:opt,n:req
 # expect.steps=n:opt:failed,n:req:success
+---
+# case=while_inline_expands_multiple_tasks
+counter = 0
+workflow(name="ci")
+node(id="n", depends_on=[])
+while counter < 3: task(id="n:" + str(counter), node="n", cmd="run", needs=[]); counter = counter + 1
+entrypoint(targets=["n:0", "n:1", "n:2"])
+# expect.ok=true
+# expect.state=completed
+# expect.order=n:0,n:1,n:2
+# expect.steps=n:0:success,n:1:success,n:2:success

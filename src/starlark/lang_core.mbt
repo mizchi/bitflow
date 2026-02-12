@@ -891,6 +891,42 @@ fn resolve_method_call(
 }
 
 ///|
+fn iterable_items_for_expr_helper(
+  fn_name : String,
+  value : StarlarkValue,
+  line : Int,
+  column : Int,
+  errors : Array[String],
+) -> Array[StarlarkValue]? {
+  match value {
+    List(items) => Some(items)
+    Dict(entries) => {
+      let items : Array[StarlarkValue] = []
+      for key, _ in entries {
+        items.push(Str(key))
+      }
+      Some(items)
+    }
+    Str(text) => {
+      let items : Array[StarlarkValue] = []
+      for i in 0..<text.length() {
+        items.push(Str(String::unsafe_substring(text, start=i, end=i + 1)))
+      }
+      Some(items)
+    }
+    _ => {
+      semantic_error(
+        errors,
+        line,
+        column,
+        "\{fn_name}() expects iterable (string, list, or dict)",
+      )
+      None
+    }
+  }
+}
+
+///|
 fn resolve_expr_call(
   name : String,
   args : Array[StarlarkValue],
@@ -898,7 +934,105 @@ fn resolve_expr_call(
   column : Int,
   errors : Array[String],
 ) -> StarlarkValue? {
-  if name == "str" {
+  if name == "range" {
+    if args.length() < 1 || args.length() > 3 {
+      semantic_error(
+        errors, line, column, "range() expects 1 to 3 integer arguments",
+      )
+      return None
+    }
+    let (start, stop, step) = if args.length() == 1 {
+      match args[0] {
+        Num(stop) => (0, stop, 1)
+        _ => {
+          semantic_error(errors, line, column, "range() arguments must be int")
+          return None
+        }
+      }
+    } else if args.length() == 2 {
+      match (args[0], args[1]) {
+        (Num(start), Num(stop)) => (start, stop, 1)
+        _ => {
+          semantic_error(errors, line, column, "range() arguments must be int")
+          return None
+        }
+      }
+    } else {
+      match (args[0], args[1], args[2]) {
+        (Num(start), Num(stop), Num(step)) => (start, stop, step)
+        _ => {
+          semantic_error(errors, line, column, "range() arguments must be int")
+          return None
+        }
+      }
+    }
+    if step == 0 {
+      semantic_error(errors, line, column, "range() step cannot be 0")
+      return None
+    }
+    let out : Array[StarlarkValue] = []
+    let mut current = start
+    if step > 0 {
+      while current < stop {
+        out.push(Num(current))
+        current += step
+      }
+    } else {
+      while current > stop {
+        out.push(Num(current))
+        current += step
+      }
+    }
+    Some(List(out))
+  } else if name == "enumerate" {
+    if args.length() != 1 {
+      semantic_error(
+        errors, line, column, "enumerate() expects exactly 1 argument",
+      )
+      return None
+    }
+    match iterable_items_for_expr_helper(name, args[0], line, column, errors) {
+      Some(items) => {
+        let out : Array[StarlarkValue] = []
+        let mut idx = 0
+        for item in items {
+          out.push(List([Num(idx), item]))
+          idx += 1
+        }
+        Some(List(out))
+      }
+      None => None
+    }
+  } else if name == "zip" {
+    if args.length() < 2 {
+      semantic_error(
+        errors, line, column, "zip() expects at least 2 iterable arguments",
+      )
+      return None
+    }
+    let sequences : Array[Array[StarlarkValue]] = []
+    for value in args {
+      match iterable_items_for_expr_helper(name, value, line, column, errors) {
+        Some(items) => sequences.push(items)
+        None => return None
+      }
+    }
+    let mut min_len = sequences[0].length()
+    for items in sequences {
+      if items.length() < min_len {
+        min_len = items.length()
+      }
+    }
+    let out : Array[StarlarkValue] = []
+    for i in 0..<min_len {
+      let row : Array[StarlarkValue] = []
+      for items in sequences {
+        row.push(items[i])
+      }
+      out.push(List(row))
+    }
+    Some(List(out))
+  } else if name == "str" {
     if args.length() != 1 {
       semantic_error(errors, line, column, "str() expects exactly 1 argument")
       return None

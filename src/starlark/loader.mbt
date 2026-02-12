@@ -77,12 +77,155 @@ fn is_within_workspace_root(workspace_root : String, path : String) -> Bool {
 }
 
 ///|
-fn load_path_from_call(call : StarlarkCall, errors : Array[String]) -> String? {
+priv struct LoadCallSpec {
+  path : String
+  imports : Map[String, String]
+}
+
+///|
+priv struct LoadModuleExports {
+  function_defs : Map[String, StarlarkCall]
+  values : Map[String, Bool]
+}
+
+///|
+fn call_string_arg(call : StarlarkCall, key : String) -> String? {
+  for arg in call.args {
+    if arg.name == key {
+      match arg.value {
+        Str(value) => return Some(value)
+        _ => return None
+      }
+    }
+  }
+  None
+}
+
+///|
+fn append_exported_symbol(
+  call : StarlarkCall,
+  function_defs : Map[String, StarlarkCall],
+  values : Map[String, Bool],
+) -> Unit {
+  if call.name == "__def__" {
+    if call_string_arg(call, "name") is Some(fn_name) {
+      function_defs[fn_name] = call
+    }
+    return
+  }
+  if call.name == "__assign__" {
+    if call_string_arg(call, "name") is Some(name) {
+      values[name] = true
+    }
+  }
+}
+
+///|
+fn def_alias_call(base : StarlarkCall, local_name : String) -> StarlarkCall {
+  let args : Array[StarlarkArg] = []
+  let mut replaced = false
+  for arg in base.args {
+    if arg.name == "name" {
+      args.push({
+        name: "name",
+        value: Str(local_name),
+        line: arg.line,
+        column: arg.column,
+      })
+      replaced = true
+    } else {
+      args.push(arg)
+    }
+  }
+  if not(replaced) {
+    args.push({
+      name: "name",
+      value: Str(local_name),
+      line: base.line,
+      column: base.column,
+    })
+  }
+  { name: base.name, args, line: base.line, column: base.column }
+}
+
+///|
+fn value_alias_call(
+  local_name : String,
+  symbol_name : String,
+  line : Int,
+  column : Int,
+) -> StarlarkCall {
+  {
+    name: "__assign__",
+    args: [
+      { name: "name", value: Str(local_name), line, column },
+      { name: "value", value: Ref(symbol_name), line, column },
+    ],
+    line,
+    column,
+  }
+}
+
+///|
+fn append_load_import_alias_calls(
+  imports : Map[String, String],
+  loaded_path : String,
+  module_exports : LoadModuleExports,
+  load_call : StarlarkCall,
+  calls : Array[StarlarkCall],
+  function_defs : Map[String, StarlarkCall],
+  values : Map[String, Bool],
+  errors : Array[String],
+) -> Unit {
+  if module_exports.function_defs.length() == 0 &&
+    module_exports.values.length() == 0 {
+    return
+  }
+  for local_name, symbol_name in imports {
+    match module_exports.function_defs.get(symbol_name) {
+      Some(base_def) =>
+        if local_name == symbol_name {
+          function_defs[local_name] = base_def
+        } else {
+          let alias_call = def_alias_call(base_def, local_name)
+          calls.push(alias_call)
+          append_exported_symbol(alias_call, function_defs, values)
+        }
+      None =>
+        if module_exports.values.get(symbol_name).unwrap_or(false) {
+          values[local_name] = true
+          if local_name != symbol_name {
+            let alias_call = value_alias_call(
+              local_name,
+              symbol_name,
+              load_call.line,
+              load_call.column,
+            )
+            calls.push(alias_call)
+            append_exported_symbol(alias_call, function_defs, values)
+          }
+        } else {
+          semantic_error(
+            errors,
+            load_call.line,
+            load_call.column,
+            "loaded symbol '\{symbol_name}' not found in \{loaded_path}",
+          )
+        }
+    }
+  }
+}
+
+///|
+fn load_spec_from_call(
+  call : StarlarkCall,
+  errors : Array[String],
+) -> LoadCallSpec? {
   let args = arg_map(call, errors)
   validate_call_shape(call, args, errors)
   guard args.get("path") is Some(target) else { return None }
-  match target.value {
-    Str(path) => Some(path)
+  let path = match target.value {
+    Str(path) => path
     _ => {
       semantic_error(
         errors,
@@ -90,9 +233,37 @@ fn load_path_from_call(call : StarlarkCall, errors : Array[String]) -> String? {
         target.column,
         "load.path must be string",
       )
-      None
+      return None
     }
   }
+  let imports : Map[String, String] = {}
+  match args.get("imports") {
+    Some(arg) =>
+      match arg.value {
+        Dict(entries) =>
+          for local_name, symbol_value in entries {
+            match symbol_value {
+              Str(symbol_name) => imports[local_name] = symbol_name
+              _ =>
+                semantic_error(
+                  errors,
+                  arg.line,
+                  arg.column,
+                  "load.imports values must be string",
+                )
+            }
+          }
+        _ =>
+          semantic_error(
+            errors,
+            arg.line,
+            arg.column,
+            "load.imports must be dict",
+          )
+      }
+    None => ()
+  }
+  Some({ path, imports })
 }
 
 ///|
@@ -104,6 +275,7 @@ fn collect_calls_from_fs(
   errors : Array[String],
   visiting : Map[String, Bool],
   loaded : Map[String, Bool],
+  module_exports_by_path : Map[String, LoadModuleExports],
   stack : Array[String],
 ) -> Unit {
   let normalized = path_normalize(path)
@@ -125,29 +297,50 @@ fn collect_calls_from_fs(
   match read_text(normalized) {
     Some(text) => {
       let syntax = parse_syntax(text)
+      let function_defs : Map[String, StarlarkCall] = {}
+      let values : Map[String, Bool] = {}
       for err in syntax.errors {
         errors.push(normalized + ": " + err)
       }
       for call in syntax.calls {
         if call.name == "load" {
-          match load_path_from_call(call, errors) {
-            Some(raw_path) => {
-              let resolved = resolve_load_path(normalized, raw_path)
+          match load_spec_from_call(call, errors) {
+            Some(spec) => {
+              let resolved = resolve_load_path(normalized, spec.path)
               if not(is_within_workspace_root(workspace_root, resolved)) {
                 errors.push("load path escapes workspace root: " + resolved)
                 continue
               }
               collect_calls_from_fs(
                 resolved, workspace_root, read_text, calls, errors, visiting, loaded,
-                stack,
+                module_exports_by_path, stack,
               )
+              if spec.imports.length() == 0 {
+                continue
+              }
+              match module_exports_by_path.get(resolved) {
+                Some(module_exports) =>
+                  append_load_import_alias_calls(
+                    spec.imports,
+                    resolved,
+                    module_exports,
+                    call,
+                    calls,
+                    function_defs,
+                    values,
+                    errors,
+                  )
+                None => ()
+              }
             }
             None => ()
           }
         } else {
           calls.push(call)
+          append_exported_symbol(call, function_defs, values)
         }
       }
+      module_exports_by_path[normalized] = { function_defs, values }
     }
     None => errors.push("failed to read loaded file: " + normalized)
   }
@@ -192,10 +385,11 @@ fn parse_from_fs_with_inputs_impl(
   let load_errors : Array[String] = []
   let visiting : Map[String, Bool] = {}
   let loaded : Map[String, Bool] = {}
+  let module_exports_by_path : Map[String, LoadModuleExports] = {}
   let stack : Array[String] = []
   collect_calls_from_fs(
     normalized, workspace_root, read_text, calls, load_errors, visiting, loaded,
-    stack,
+    module_exports_by_path, stack,
   )
   parse_calls_impl(calls, load_errors, external_inputs)
 }

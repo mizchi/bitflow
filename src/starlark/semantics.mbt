@@ -39,6 +39,736 @@ pub struct StarlarkParseResult {
 }
 
 ///|
+priv enum StarlarkControlSignal {
+  Next
+  BreakLoop
+  ContinueLoop
+  ReturnFromBlock(StarlarkValue)
+}
+
+///|
+priv struct StarlarkFunctionDecl {
+  params : Array[String]
+  defaults : Map[String, StarlarkValue]
+  body : String
+}
+
+///|
+const FUNCTION_CALL_MAX_DEPTH : Int = 64
+
+///|
+fn copy_bindings(
+  source : Map[String, StarlarkValue],
+) -> Map[String, StarlarkValue] {
+  let copied : Map[String, StarlarkValue] = {}
+  for key, value in source {
+    copied[key] = value
+  }
+  copied
+}
+
+///|
+fn copy_functions(
+  source : Map[String, StarlarkFunctionDecl],
+) -> Map[String, StarlarkFunctionDecl] {
+  let copied : Map[String, StarlarkFunctionDecl] = {}
+  for key, value in source {
+    copied[key] = value
+  }
+  copied
+}
+
+///|
+fn is_positional_arg_name(name : String) -> Bool {
+  name.has_prefix("$pos")
+}
+
+///|
+fn iterable_values_for_for_loop(
+  value : StarlarkValue,
+  line : Int,
+  column : Int,
+  errors : Array[String],
+) -> Array[StarlarkValue]? {
+  match value {
+    List(items) => Some(items)
+    Dict(entries) => {
+      let keys : Array[StarlarkValue] = []
+      for key, _ in entries {
+        keys.push(Str(key))
+      }
+      Some(keys)
+    }
+    Str(text) => {
+      let chars : Array[StarlarkValue] = []
+      for i in 0..<text.length() {
+        chars.push(Str(String::unsafe_substring(text, start=i, end=i + 1)))
+      }
+      Some(chars)
+    }
+    _ => {
+      semantic_error(
+        errors, line, column, "for.iter must be iterable (list, dict, or string)",
+      )
+      None
+    }
+  }
+}
+
+///|
+fn bind_function_args(
+  fn_name : String,
+  fn_decl : StarlarkFunctionDecl,
+  positional_values : Array[StarlarkValue],
+  keyword_values : Map[String, StarlarkValue],
+  line : Int,
+  column : Int,
+  errors : Array[String],
+  call_stack : Array[String],
+) -> Map[String, StarlarkValue]? {
+  let bound : Map[String, StarlarkValue] = {}
+  let mut invalid = false
+  if positional_values.length() > fn_decl.params.length() {
+    semantic_error_with_stack(
+      errors,
+      line,
+      column,
+      "too many positional arguments for function \{fn_name}",
+      call_stack,
+    )
+    invalid = true
+  }
+  let mut idx = 0
+  for value in positional_values {
+    if idx < fn_decl.params.length() {
+      let param = fn_decl.params[idx]
+      bound[param] = value
+    }
+    idx += 1
+  }
+  for key, value in keyword_values {
+    if not(fn_decl.params.contains(key)) {
+      semantic_error_with_stack(
+        errors,
+        line,
+        column,
+        "unknown argument '\{key}' for function \{fn_name}",
+        call_stack,
+      )
+      invalid = true
+      continue
+    }
+    if bound.get(key) is Some(_) {
+      semantic_error_with_stack(
+        errors,
+        line,
+        column,
+        "multiple values for argument '\{key}' in function \{fn_name}",
+        call_stack,
+      )
+      invalid = true
+      continue
+    }
+    bound[key] = value
+  }
+  for param in fn_decl.params {
+    if bound.get(param) is Some(_) {
+      continue
+    }
+    match fn_decl.defaults.get(param) {
+      Some(default_value) => bound[param] = default_value
+      None => {
+        semantic_error_with_stack(
+          errors,
+          line,
+          column,
+          "missing argument '\{param}' for function \{fn_name}",
+          call_stack,
+        )
+        invalid = true
+      }
+    }
+  }
+  if invalid {
+    None
+  } else {
+    Some(bound)
+  }
+}
+
+///|
+fn call_function_with_resolved_args(
+  fn_name : String,
+  fn_decl : StarlarkFunctionDecl,
+  positional_values : Array[StarlarkValue],
+  keyword_values : Map[String, StarlarkValue],
+  bindings : Map[String, StarlarkValue],
+  functions : Map[String, StarlarkFunctionDecl],
+  line : Int,
+  column : Int,
+  errors : Array[String],
+  call_stack : Array[String],
+) -> StarlarkValue? {
+  if call_stack.length() > FUNCTION_CALL_MAX_DEPTH {
+    semantic_error_with_stack(
+      errors,
+      line,
+      column,
+      "function call depth exceeded \{FUNCTION_CALL_MAX_DEPTH}",
+      call_stack,
+    )
+    return None
+  }
+  let bound_args = match
+    bind_function_args(
+      fn_name, fn_decl, positional_values, keyword_values, line, column, errors,
+      call_stack,
+    ) {
+    Some(bound) => bound
+    None => return None
+  }
+  let local_bindings = copy_bindings(bindings)
+  for key, value in bound_args {
+    local_bindings[key] = value
+  }
+  let nested = parse_syntax(fn_decl.body)
+  for err in nested.errors {
+    errors.push(err)
+  }
+  let nodes : Array[StarlarkNodeDecl] = []
+  let tasks : Array[StarlarkTaskDecl] = []
+  let entry_targets : Array[String] = []
+  let var_types : Map[String, String] = {}
+  let required_pending : Map[String, Bool] = {}
+  let required_locations : Map[String, (Int, Int)] = {}
+  let external_inputs : Map[String, String] = {}
+  let local_functions = copy_functions(functions)
+  let (_, _, _, signal) = apply_calls(
+    nested.calls,
+    nodes,
+    tasks,
+    entry_targets,
+    local_bindings,
+    var_types,
+    required_pending,
+    required_locations,
+    external_inputs,
+    errors,
+    "default",
+    1,
+    false,
+    local_functions,
+    0,
+    call_stack,
+  )
+  match signal {
+    ReturnFromBlock(value) => Some(value)
+    _ => Some(NoneValue)
+  }
+}
+
+///|
+fn resolve_value_with_functions(
+  value : StarlarkValue,
+  bindings : Map[String, StarlarkValue],
+  functions : Map[String, StarlarkFunctionDecl],
+  line : Int,
+  column : Int,
+  errors : Array[String],
+  call_stack? : Array[String] = [],
+) -> StarlarkValue? {
+  match value {
+    MethodCall(receiver, name, args) => {
+      let resolved_receiver = match
+        resolve_value_with_functions(
+          receiver, bindings, functions, line, column, errors, call_stack~,
+        ) {
+        Some(value) => value
+        None => return None
+      }
+      let resolved_args : Array[StarlarkValue] = []
+      for arg in args {
+        match
+          resolve_value_with_functions(
+            arg, bindings, functions, line, column, errors, call_stack~,
+          ) {
+          Some(v) => resolved_args.push(v)
+          None => return None
+        }
+      }
+      resolve_method_call(
+        resolved_receiver, name, resolved_args, line, column, errors,
+      )
+    }
+    Call(name, args) => {
+      let positional_args : Array[StarlarkValue] = []
+      let keyword_args : Map[String, StarlarkValue] = {}
+      for arg in args {
+        match arg {
+          CallKwArg(key, value_expr) =>
+            match
+              resolve_value_with_functions(
+                value_expr,
+                bindings,
+                functions,
+                line,
+                column,
+                errors,
+                call_stack~,
+              ) {
+              Some(v) =>
+                if keyword_args.get(key) is Some(_) {
+                  semantic_error_with_stack(
+                    errors,
+                    line,
+                    column,
+                    "duplicate keyword argument '\{key}' in expression call",
+                    call_stack,
+                  )
+                  return None
+                } else {
+                  keyword_args[key] = v
+                }
+              None => return None
+            }
+          _ =>
+            match
+              resolve_value_with_functions(
+                arg,
+                bindings,
+                functions,
+                line,
+                column,
+                errors,
+                call_stack~,
+              ) {
+              Some(v) => positional_args.push(v)
+              None => return None
+            }
+        }
+      }
+      match functions.get(name) {
+        Some(fn_decl) => {
+          let nested_stack : Array[String] = []
+          for item in call_stack {
+            nested_stack.push(item)
+          }
+          nested_stack.push(name)
+          call_function_with_resolved_args(
+            name, fn_decl, positional_args, keyword_args, bindings, functions, line,
+            column, errors, nested_stack,
+          )
+        }
+        None =>
+          if keyword_args.length() > 0 {
+            semantic_error_with_stack(
+              errors,
+              line,
+              column,
+              "keyword arguments are not supported for expression function \{name}",
+              call_stack,
+            )
+            None
+          } else {
+            resolve_expr_call(name, positional_args, line, column, errors)
+          }
+      }
+    }
+    CallKwArg(_, _) => {
+      semantic_error_with_stack(
+        errors, line, column, "keyword argument is only allowed inside function calls",
+        call_stack,
+      )
+      None
+    }
+    Slice(target, start, end) =>
+      match
+        resolve_value_with_functions(
+          target, bindings, functions, line, column, errors, call_stack~,
+        ) {
+        Some(resolved_target) => {
+          let resolved_start = match start {
+            Some(expr) =>
+              match
+                resolve_value_with_functions(
+                  expr, bindings, functions, line, column, errors, call_stack~,
+                ) {
+                Some(v) => Some(v)
+                None => return None
+              }
+            None => None
+          }
+          let resolved_end = match end {
+            Some(expr) =>
+              match
+                resolve_value_with_functions(
+                  expr, bindings, functions, line, column, errors, call_stack~,
+                ) {
+                Some(v) => Some(v)
+                None => return None
+              }
+            None => None
+          }
+          resolve_slice(
+            resolved_target, resolved_start, resolved_end, line, column, errors,
+          )
+        }
+        None => None
+      }
+    Index(target, index) =>
+      match
+        resolve_value_with_functions(
+          target, bindings, functions, line, column, errors, call_stack~,
+        ) {
+        Some(resolved_target) =>
+          match
+            resolve_value_with_functions(
+              index, bindings, functions, line, column, errors, call_stack~,
+            ) {
+            Some(resolved_index) =>
+              resolve_index(
+                resolved_target, resolved_index, line, column, errors,
+              )
+            None => None
+          }
+        None => None
+      }
+    Neg(expr) =>
+      match
+        resolve_value_with_functions(
+          expr, bindings, functions, line, column, errors, call_stack~,
+        ) {
+        Some(resolved) => resolve_neg(resolved, line, column, errors)
+        None => None
+      }
+    IfExpr(cond, then_value, else_value) =>
+      match
+        resolve_value_with_functions(
+          cond, bindings, functions, line, column, errors, call_stack~,
+        ) {
+        Some(cond_value) =>
+          if value_truthy(cond_value) {
+            resolve_value_with_functions(
+              then_value, bindings, functions, line, column, errors,
+              call_stack~,
+            )
+          } else {
+            resolve_value_with_functions(
+              else_value, bindings, functions, line, column, errors,
+              call_stack~,
+            )
+          }
+        None => None
+      }
+    Lt(left, right) =>
+      match
+        resolve_value_with_functions(
+          left, bindings, functions, line, column, errors, call_stack~,
+        ) {
+        Some(resolved_left) =>
+          match
+            resolve_value_with_functions(
+              right, bindings, functions, line, column, errors, call_stack~,
+            ) {
+            Some(resolved_right) =>
+              resolve_order_compare(
+                "<", resolved_left, resolved_right, line, column, errors,
+              )
+            None => None
+          }
+        None => None
+      }
+    Lte(left, right) =>
+      match
+        resolve_value_with_functions(
+          left, bindings, functions, line, column, errors, call_stack~,
+        ) {
+        Some(resolved_left) =>
+          match
+            resolve_value_with_functions(
+              right, bindings, functions, line, column, errors, call_stack~,
+            ) {
+            Some(resolved_right) =>
+              resolve_order_compare(
+                "<=", resolved_left, resolved_right, line, column, errors,
+              )
+            None => None
+          }
+        None => None
+      }
+    Gt(left, right) =>
+      match
+        resolve_value_with_functions(
+          left, bindings, functions, line, column, errors, call_stack~,
+        ) {
+        Some(resolved_left) =>
+          match
+            resolve_value_with_functions(
+              right, bindings, functions, line, column, errors, call_stack~,
+            ) {
+            Some(resolved_right) =>
+              resolve_order_compare(
+                ">", resolved_left, resolved_right, line, column, errors,
+              )
+            None => None
+          }
+        None => None
+      }
+    Gte(left, right) =>
+      match
+        resolve_value_with_functions(
+          left, bindings, functions, line, column, errors, call_stack~,
+        ) {
+        Some(resolved_left) =>
+          match
+            resolve_value_with_functions(
+              right, bindings, functions, line, column, errors, call_stack~,
+            ) {
+            Some(resolved_right) =>
+              resolve_order_compare(
+                ">=", resolved_left, resolved_right, line, column, errors,
+              )
+            None => None
+          }
+        None => None
+      }
+    In(left, right) =>
+      match
+        resolve_value_with_functions(
+          left, bindings, functions, line, column, errors, call_stack~,
+        ) {
+        Some(resolved_left) =>
+          match
+            resolve_value_with_functions(
+              right, bindings, functions, line, column, errors, call_stack~,
+            ) {
+            Some(resolved_right) =>
+              resolve_in_membership(
+                resolved_left, resolved_right, line, column, errors,
+              )
+            None => None
+          }
+        None => None
+      }
+    NotIn(left, right) =>
+      match
+        resolve_value_with_functions(
+          left, bindings, functions, line, column, errors, call_stack~,
+        ) {
+        Some(resolved_left) =>
+          match
+            resolve_value_with_functions(
+              right, bindings, functions, line, column, errors, call_stack~,
+            ) {
+            Some(resolved_right) =>
+              match
+                resolve_in_membership(
+                  resolved_left, resolved_right, line, column, errors,
+                ) {
+                Some(Bool(found)) => Some(Bool(not(found)))
+                Some(_) => None
+                None => None
+              }
+            None => None
+          }
+        None => None
+      }
+    Not(expr) =>
+      match
+        resolve_value_with_functions(
+          expr, bindings, functions, line, column, errors, call_stack~,
+        ) {
+        Some(resolved) => Some(Bool(not(value_truthy(resolved))))
+        None => None
+      }
+    And(left, right) =>
+      match
+        resolve_value_with_functions(
+          left, bindings, functions, line, column, errors, call_stack~,
+        ) {
+        Some(resolved_left) =>
+          if value_truthy(resolved_left) {
+            resolve_value_with_functions(
+              right, bindings, functions, line, column, errors, call_stack~,
+            )
+          } else {
+            Some(resolved_left)
+          }
+        None => None
+      }
+    Or(left, right) =>
+      match
+        resolve_value_with_functions(
+          left, bindings, functions, line, column, errors, call_stack~,
+        ) {
+        Some(resolved_left) =>
+          if value_truthy(resolved_left) {
+            Some(resolved_left)
+          } else {
+            resolve_value_with_functions(
+              right, bindings, functions, line, column, errors, call_stack~,
+            )
+          }
+        None => None
+      }
+    Eq(left, right) =>
+      match
+        resolve_value_with_functions(
+          left, bindings, functions, line, column, errors, call_stack~,
+        ) {
+        Some(resolved_left) =>
+          match
+            resolve_value_with_functions(
+              right, bindings, functions, line, column, errors, call_stack~,
+            ) {
+            Some(resolved_right) =>
+              Some(Bool(value_equals(resolved_left, resolved_right)))
+            None => None
+          }
+        None => None
+      }
+    NotEq(left, right) =>
+      match
+        resolve_value_with_functions(
+          left, bindings, functions, line, column, errors, call_stack~,
+        ) {
+        Some(resolved_left) =>
+          match
+            resolve_value_with_functions(
+              right, bindings, functions, line, column, errors, call_stack~,
+            ) {
+            Some(resolved_right) =>
+              Some(Bool(not(value_equals(resolved_left, resolved_right))))
+            None => None
+          }
+        None => None
+      }
+    Add(left, right) =>
+      match
+        resolve_value_with_functions(
+          left, bindings, functions, line, column, errors, call_stack~,
+        ) {
+        Some(resolved_left) =>
+          match
+            resolve_value_with_functions(
+              right, bindings, functions, line, column, errors, call_stack~,
+            ) {
+            Some(resolved_right) =>
+              resolve_add(resolved_left, resolved_right, line, column, errors)
+            None => None
+          }
+        None => None
+      }
+    Sub(left, right) =>
+      match
+        resolve_value_with_functions(
+          left, bindings, functions, line, column, errors, call_stack~,
+        ) {
+        Some(resolved_left) =>
+          match
+            resolve_value_with_functions(
+              right, bindings, functions, line, column, errors, call_stack~,
+            ) {
+            Some(resolved_right) =>
+              resolve_sub(resolved_left, resolved_right, line, column, errors)
+            None => None
+          }
+        None => None
+      }
+    Mul(left, right) =>
+      match
+        resolve_value_with_functions(
+          left, bindings, functions, line, column, errors, call_stack~,
+        ) {
+        Some(resolved_left) =>
+          match
+            resolve_value_with_functions(
+              right, bindings, functions, line, column, errors, call_stack~,
+            ) {
+            Some(resolved_right) =>
+              resolve_mul(resolved_left, resolved_right, line, column, errors)
+            None => None
+          }
+        None => None
+      }
+    FloorDiv(left, right) =>
+      match
+        resolve_value_with_functions(
+          left, bindings, functions, line, column, errors, call_stack~,
+        ) {
+        Some(resolved_left) =>
+          match
+            resolve_value_with_functions(
+              right, bindings, functions, line, column, errors, call_stack~,
+            ) {
+            Some(resolved_right) =>
+              resolve_floor_div(
+                resolved_left, resolved_right, line, column, errors,
+              )
+            None => None
+          }
+        None => None
+      }
+    Mod(left, right) =>
+      match
+        resolve_value_with_functions(
+          left, bindings, functions, line, column, errors, call_stack~,
+        ) {
+        Some(resolved_left) =>
+          match
+            resolve_value_with_functions(
+              right, bindings, functions, line, column, errors, call_stack~,
+            ) {
+            Some(resolved_right) =>
+              resolve_mod(resolved_left, resolved_right, line, column, errors)
+            None => None
+          }
+        None => None
+      }
+    Ref(name) =>
+      match bindings.get(name) {
+        Some(bound) =>
+          resolve_value_with_functions(
+            bound, bindings, functions, line, column, errors, call_stack~,
+          )
+        None => {
+          semantic_error_with_stack(
+            errors, line, column, "unknown variable '\{name}'", call_stack,
+          )
+          None
+        }
+      }
+    List(values) => {
+      let resolved : Array[StarlarkValue] = []
+      for item in values {
+        match
+          resolve_value_with_functions(
+            item, bindings, functions, line, column, errors, call_stack~,
+          ) {
+          Some(value) => resolved.push(value)
+          None => return None
+        }
+      }
+      Some(List(resolved))
+    }
+    Dict(values) => {
+      let resolved : Map[String, StarlarkValue] = {}
+      for key, item in values {
+        match
+          resolve_value_with_functions(
+            item, bindings, functions, line, column, errors, call_stack~,
+          ) {
+          Some(value) => resolved[key] = value
+          None => return None
+        }
+      }
+      Some(Dict(resolved))
+    }
+    _ => resolve_value(value, bindings, line, column, errors)
+  }
+}
+
+///|
 fn semantic_error(
   errors : Array[String],
   line : Int,
@@ -46,6 +776,26 @@ fn semantic_error(
   msg : String,
 ) -> Unit {
   errors.push("line \{line}, col \{column}: " + msg)
+}
+
+///|
+fn semantic_error_with_stack(
+  errors : Array[String],
+  line : Int,
+  column : Int,
+  msg : String,
+  call_stack : Array[String],
+) -> Unit {
+  if call_stack.length() == 0 {
+    semantic_error(errors, line, column, msg)
+  } else {
+    semantic_error(
+      errors,
+      line,
+      column,
+      msg + " (call stack: " + call_stack.join(" -> ") + ")",
+    )
+  }
 }
 
 ///|
@@ -75,7 +825,9 @@ fn arg_map(
 fn arg_map_resolved(
   call : StarlarkCall,
   bindings : Map[String, StarlarkValue],
+  functions : Map[String, StarlarkFunctionDecl],
   errors : Array[String],
+  call_stack? : Array[String] = [],
 ) -> Map[String, StarlarkArg] {
   let mapped : Map[String, StarlarkArg] = {}
   for arg in call.args {
@@ -88,7 +840,16 @@ fn arg_map_resolved(
       )
       continue
     }
-    match resolve_value(arg.value, bindings, arg.line, arg.column, errors) {
+    match
+      resolve_value_with_functions(
+        arg.value,
+        bindings,
+        functions,
+        arg.line,
+        arg.column,
+        errors,
+        call_stack~,
+      ) {
       Some(value) =>
         mapped[arg.name] = {
           name: arg.name,
@@ -384,7 +1145,9 @@ fn expect_task_cmd(arg : StarlarkArg, errors : Array[String]) -> String? {
 fn apply_assignment(
   call : StarlarkCall,
   bindings : Map[String, StarlarkValue],
+  functions : Map[String, StarlarkFunctionDecl],
   errors : Array[String],
+  call_stack? : Array[String] = [],
 ) -> Unit {
   let args = arg_map(call, errors)
   let name_arg = match required_arg(call, args, "name", errors) {
@@ -400,12 +1163,14 @@ fn apply_assignment(
     None => return
   }
   match
-    resolve_value(
+    resolve_value_with_functions(
       value_arg.value,
       bindings,
+      functions,
       value_arg.line,
       value_arg.column,
       errors,
+      call_stack~,
     ) {
     Some(value) => bindings[name] = value
     None => ()
@@ -453,6 +1218,7 @@ fn value_matches_type(value : StarlarkValue, typ : String) -> Bool {
     }
     Ref(_) => false
     MethodCall(_, _, _) => false
+    CallKwArg(_, _) => false
     Call(_, _) => false
     Slice(_, _, _) => false
     Index(_, _) => false
@@ -504,6 +1270,7 @@ fn infer_var_type(value : StarlarkValue) -> String {
     }
     Ref(_) => "any"
     MethodCall(_, _, _) => "any"
+    CallKwArg(_, _) => "any"
     Call(_, _) => "any"
     Slice(_, _, _) => "any"
     Index(_, _) => "any"
@@ -880,33 +1647,447 @@ fn parse_with_inputs_impl(
 }
 
 ///|
-fn parse_calls_impl(
+fn apply_calls(
   calls : Array[StarlarkCall],
-  syntax_errors : Array[String],
+  nodes : Array[StarlarkNodeDecl],
+  tasks : Array[StarlarkTaskDecl],
+  entry_targets : Array[String],
+  bindings : Map[String, StarlarkValue],
+  var_types : Map[String, String],
+  required_pending : Map[String, Bool],
+  required_locations : Map[String, (Int, Int)],
   external_inputs : Map[String, String],
-) -> StarlarkParseResult {
-  let errors : Array[String] = []
-  for err in syntax_errors {
-    errors.push(err)
-  }
-
-  let nodes : Array[StarlarkNodeDecl] = []
-  let tasks : Array[StarlarkTaskDecl] = []
-  let entry_targets : Array[String] = []
-  let mut workflow_name = "default"
-  let mut max_parallel = 1
-  let mut seen_workflow = false
-  let bindings : Map[String, StarlarkValue] = {}
-  let var_types : Map[String, String] = {}
-  let required_pending : Map[String, Bool] = {}
-  let required_locations : Map[String, (Int, Int)] = {}
+  errors : Array[String],
+  workflow_name : String,
+  max_parallel : Int,
+  seen_workflow : Bool,
+  functions : Map[String, StarlarkFunctionDecl],
+  loop_depth : Int,
+  call_stack : Array[String],
+) -> (String, Int, Bool, StarlarkControlSignal) {
+  let mut current_workflow_name = workflow_name
+  let mut current_max_parallel = max_parallel
+  let mut current_seen_workflow = seen_workflow
 
   for call in calls {
     let canonical_name = builtin_canonical_name(call.name)
     match canonical_name {
-      "__assign__" => apply_assignment(call, bindings, errors)
+      "__assign__" =>
+        apply_assignment(call, bindings, functions, errors, call_stack~)
+      "__if__" => {
+        let args = arg_map_resolved(
+          call,
+          bindings,
+          functions,
+          errors,
+          call_stack~,
+        )
+        validate_call_shape(call, args, errors)
+        let mut selected_branch = ""
+        match args.get("cond") {
+          Some(arg) =>
+            selected_branch = if value_truthy(arg.value) {
+              "then"
+            } else {
+              "else"
+            }
+          None => ()
+        }
+        if selected_branch.length() == 0 {
+          continue
+        }
+        match args.get(selected_branch) {
+          Some(arg) =>
+            match expect_string("__if__", selected_branch, arg, errors) {
+              Some(source) => {
+                let nested = parse_syntax(source)
+                for err in nested.errors {
+                  errors.push(err)
+                }
+                let (next_name, next_parallel, next_seen, signal) = apply_calls(
+                  nested.calls,
+                  nodes,
+                  tasks,
+                  entry_targets,
+                  bindings,
+                  var_types,
+                  required_pending,
+                  required_locations,
+                  external_inputs,
+                  errors,
+                  current_workflow_name,
+                  current_max_parallel,
+                  current_seen_workflow,
+                  functions,
+                  loop_depth,
+                  call_stack,
+                )
+                current_workflow_name = next_name
+                current_max_parallel = next_parallel
+                current_seen_workflow = next_seen
+                match signal {
+                  Next => ()
+                  _ =>
+                    return (
+                      current_workflow_name, current_max_parallel, current_seen_workflow,
+                      signal,
+                    )
+                }
+              }
+              None => ()
+            }
+          None => ()
+        }
+      }
+      "__for__" => {
+        let args = arg_map_resolved(
+          call,
+          bindings,
+          functions,
+          errors,
+          call_stack~,
+        )
+        validate_call_shape(call, args, errors)
+        let mut iter_line = call.line
+        let mut iter_col = call.column
+        let mut loop_name = ""
+        let mut iterable : StarlarkValue? = None
+        let mut body_source = ""
+        match args.get("name") {
+          Some(arg) =>
+            if expect_string("__for__", "name", arg, errors) is Some(value) {
+              loop_name = value
+            }
+          None => ()
+        }
+        match args.get("iter") {
+          Some(arg) => {
+            iter_line = arg.line
+            iter_col = arg.column
+            iterable = Some(arg.value)
+          }
+          None => ()
+        }
+        match args.get("body") {
+          Some(arg) =>
+            if expect_string("__for__", "body", arg, errors) is Some(value) {
+              body_source = value
+            }
+          None => ()
+        }
+        if loop_name.length() == 0 || body_source.length() == 0 {
+          continue
+        }
+        match iterable {
+          Some(iter_value) =>
+            match
+              iterable_values_for_for_loop(
+                iter_value, iter_line, iter_col, errors,
+              ) {
+              Some(items) => {
+                let nested = parse_syntax(body_source)
+                for err in nested.errors {
+                  errors.push(err)
+                }
+                for item in items {
+                  bindings[loop_name] = item
+                  let (next_name, next_parallel, next_seen, signal) = apply_calls(
+                    nested.calls,
+                    nodes,
+                    tasks,
+                    entry_targets,
+                    bindings,
+                    var_types,
+                    required_pending,
+                    required_locations,
+                    external_inputs,
+                    errors,
+                    current_workflow_name,
+                    current_max_parallel,
+                    current_seen_workflow,
+                    functions,
+                    loop_depth + 1,
+                    call_stack,
+                  )
+                  current_workflow_name = next_name
+                  current_max_parallel = next_parallel
+                  current_seen_workflow = next_seen
+                  match signal {
+                    Next => ()
+                    BreakLoop => break
+                    ContinueLoop => continue
+                    ReturnFromBlock(value) =>
+                      return (
+                        current_workflow_name,
+                        current_max_parallel,
+                        current_seen_workflow,
+                        ReturnFromBlock(value),
+                      )
+                  }
+                }
+              }
+              None => ()
+            }
+          None => ()
+        }
+      }
+      "__while__" => {
+        let args = arg_map(call, errors)
+        validate_call_shape(call, args, errors)
+        let mut cond_line = call.line
+        let mut cond_col = call.column
+        let mut cond_expr : StarlarkValue? = None
+        let mut body_source = ""
+        match args.get("cond") {
+          Some(arg) => {
+            cond_line = arg.line
+            cond_col = arg.column
+            cond_expr = Some(arg.value)
+          }
+          None => ()
+        }
+        match args.get("body") {
+          Some(arg) =>
+            if expect_string("__while__", "body", arg, errors) is Some(value) {
+              body_source = value
+            }
+          None => ()
+        }
+        if body_source.length() == 0 {
+          continue
+        }
+        let nested = parse_syntax(body_source)
+        for err in nested.errors {
+          errors.push(err)
+        }
+        let mut loop_count = 0
+        while true {
+          if loop_count >= 10000 {
+            semantic_error(
+              errors, cond_line, cond_col, "while loop exceeded 10000 iterations",
+            )
+            break
+          }
+          let should_continue = match cond_expr {
+            Some(cond) =>
+              match
+                resolve_value_with_functions(
+                  cond,
+                  bindings,
+                  functions,
+                  cond_line,
+                  cond_col,
+                  errors,
+                  call_stack~,
+                ) {
+                Some(value) => value_truthy(value)
+                None => false
+              }
+            None => false
+          }
+          if not(should_continue) {
+            break
+          }
+          let (next_name, next_parallel, next_seen, signal) = apply_calls(
+            nested.calls,
+            nodes,
+            tasks,
+            entry_targets,
+            bindings,
+            var_types,
+            required_pending,
+            required_locations,
+            external_inputs,
+            errors,
+            current_workflow_name,
+            current_max_parallel,
+            current_seen_workflow,
+            functions,
+            loop_depth + 1,
+            call_stack,
+          )
+          current_workflow_name = next_name
+          current_max_parallel = next_parallel
+          current_seen_workflow = next_seen
+          loop_count += 1
+          match signal {
+            Next => ()
+            BreakLoop => break
+            ContinueLoop => continue
+            ReturnFromBlock(value) =>
+              return (
+                current_workflow_name,
+                current_max_parallel,
+                current_seen_workflow,
+                ReturnFromBlock(value),
+              )
+          }
+        }
+      }
+      "__def__" => {
+        let args = arg_map_resolved(
+          call,
+          bindings,
+          functions,
+          errors,
+          call_stack~,
+        )
+        validate_call_shape(call, args, errors)
+        let mut invalid = false
+        let mut fn_name = ""
+        let mut params : Array[String] = []
+        let defaults : Map[String, StarlarkValue] = {}
+        let mut body_source = ""
+        match args.get("name") {
+          Some(arg) =>
+            if expect_string("__def__", "name", arg, errors) is Some(value) {
+              fn_name = value
+            } else {
+              invalid = true
+            }
+          None => invalid = true
+        }
+        match args.get("params") {
+          Some(arg) =>
+            if expect_string_list("__def__", "params", arg, errors)
+              is Some(value) {
+              params = value
+            } else {
+              invalid = true
+            }
+          None => invalid = true
+        }
+        match args.get("defaults") {
+          Some(arg) =>
+            match arg.value {
+              Dict(items) =>
+                for key, value in items {
+                  if params.contains(key) {
+                    defaults[key] = value
+                  } else {
+                    semantic_error(
+                      errors,
+                      arg.line,
+                      arg.column,
+                      "unknown default parameter '\{key}' for function \{fn_name}",
+                    )
+                    invalid = true
+                  }
+                }
+              _ => {
+                semantic_error(
+                  errors,
+                  arg.line,
+                  arg.column,
+                  "__def__.defaults must be dict",
+                )
+                invalid = true
+              }
+            }
+          None => ()
+        }
+        match args.get("body") {
+          Some(arg) =>
+            if expect_string("__def__", "body", arg, errors) is Some(value) {
+              body_source = value
+            } else {
+              invalid = true
+            }
+          None => invalid = true
+        }
+        let param_seen : Map[String, Bool] = {}
+        for param in params {
+          if param_seen.get(param) is Some(_) {
+            semantic_error(
+              errors,
+              call.line,
+              call.column,
+              "duplicate parameter '\{param}' in function \{fn_name}",
+            )
+            invalid = true
+          } else {
+            param_seen[param] = true
+          }
+        }
+        if fn_name.length() > 0 && builtin_spec_for(fn_name) is Some(_) {
+          semantic_error(
+            errors,
+            call.line,
+            call.column,
+            "function name '\{fn_name}' conflicts with builtin statement",
+          )
+          invalid = true
+        }
+        if not(invalid) && fn_name.length() > 0 && body_source.length() > 0 {
+          functions[fn_name] = { params, defaults, body: body_source }
+        }
+      }
+      "__return__" => {
+        let args = arg_map_resolved(
+          call,
+          bindings,
+          functions,
+          errors,
+          call_stack~,
+        )
+        validate_call_shape(call, args, errors)
+        let return_value = match args.get("value") {
+          Some(arg) => arg.value
+          None => NoneValue
+        }
+        return (
+          current_workflow_name,
+          current_max_parallel,
+          current_seen_workflow,
+          ReturnFromBlock(return_value),
+        )
+      }
+      "__break__" => {
+        let args = arg_map(call, errors)
+        validate_call_shape(call, args, errors)
+        if loop_depth <= 0 {
+          semantic_error(
+            errors,
+            call.line,
+            call.column,
+            "break statement is only allowed inside loops",
+          )
+          continue
+        }
+        return (
+          current_workflow_name,
+          current_max_parallel,
+          current_seen_workflow,
+          BreakLoop,
+        )
+      }
+      "__continue__" => {
+        let args = arg_map(call, errors)
+        validate_call_shape(call, args, errors)
+        if loop_depth <= 0 {
+          semantic_error(
+            errors,
+            call.line,
+            call.column,
+            "continue statement is only allowed inside loops",
+          )
+          continue
+        }
+        return (
+          current_workflow_name,
+          current_max_parallel,
+          current_seen_workflow,
+          ContinueLoop,
+        )
+      }
       "var" => {
-        let args = arg_map_resolved(call, bindings, errors)
+        let args = arg_map_resolved(
+          call,
+          bindings,
+          functions,
+          errors,
+          call_stack~,
+        )
         validate_call_shape(call, args, errors)
         apply_var_call(
           call, args, bindings, var_types, required_pending, required_locations,
@@ -914,14 +2095,20 @@ fn parse_calls_impl(
         )
       }
       "config" => {
-        let args = arg_map_resolved(call, bindings, errors)
+        let args = arg_map_resolved(
+          call,
+          bindings,
+          functions,
+          errors,
+          call_stack~,
+        )
         validate_call_shape(call, args, errors)
         apply_config_call(
           call, args, bindings, var_types, required_pending, errors,
         )
       }
       "workflow" => {
-        if seen_workflow {
+        if current_seen_workflow {
           semantic_error(
             errors,
             call.line,
@@ -930,14 +2117,20 @@ fn parse_calls_impl(
           )
           continue
         }
-        seen_workflow = true
-        let args = arg_map_resolved(call, bindings, errors)
+        current_seen_workflow = true
+        let args = arg_map_resolved(
+          call,
+          bindings,
+          functions,
+          errors,
+          call_stack~,
+        )
         validate_call_shape(call, args, errors)
 
         match args.get("name") {
           Some(arg) =>
             match expect_string("workflow", "name", arg, errors) {
-              Some(name) => workflow_name = name
+              Some(name) => current_workflow_name = name
               None => ()
             }
           None => ()
@@ -948,7 +2141,7 @@ fn parse_calls_impl(
             match expect_int("workflow", "max_parallel", arg, errors) {
               Some(value) =>
                 if value > 0 {
-                  max_parallel = value
+                  current_max_parallel = value
                 } else {
                   semantic_error(
                     errors,
@@ -963,7 +2156,13 @@ fn parse_calls_impl(
         }
       }
       "node" => {
-        let args = arg_map_resolved(call, bindings, errors)
+        let args = arg_map_resolved(
+          call,
+          bindings,
+          functions,
+          errors,
+          call_stack~,
+        )
         validate_call_shape(call, args, errors)
         let mut invalid = false
         let mut id = ""
@@ -1006,7 +2205,13 @@ fn parse_calls_impl(
         }
       }
       "task" => {
-        let args = arg_map_resolved(call, bindings, errors)
+        let args = arg_map_resolved(
+          call,
+          bindings,
+          functions,
+          errors,
+          call_stack~,
+        )
         validate_call_shape(call, args, errors)
         let mut invalid = false
         let mut id = ""
@@ -1136,7 +2341,13 @@ fn parse_calls_impl(
         }
       }
       "entrypoint" => {
-        let args = arg_map_resolved(call, bindings, errors)
+        let args = arg_map_resolved(
+          call,
+          bindings,
+          functions,
+          errors,
+          call_stack~,
+        )
         validate_call_shape(call, args, errors)
         match args.get("targets") {
           Some(arg) =>
@@ -1157,14 +2368,151 @@ fn parse_calls_impl(
           "load() is only supported when parsing from fs",
         )
       _ =>
-        semantic_error(
-          errors,
-          call.line,
-          call.column,
-          "unknown statement: \{call.name}",
-        )
+        match functions.get(canonical_name) {
+          Some(fn_decl) => {
+            let args = arg_map_resolved(
+              call,
+              bindings,
+              functions,
+              errors,
+              call_stack~,
+            )
+            let positional_values : Array[StarlarkValue] = []
+            let keyword_values : Map[String, StarlarkValue] = {}
+            for arg in call.args {
+              match args.get(arg.name) {
+                Some(value) =>
+                  if is_positional_arg_name(arg.name) {
+                    positional_values.push(value.value)
+                  } else {
+                    keyword_values[arg.name] = value.value
+                  }
+                None => ()
+              }
+            }
+            let nested_call_stack : Array[String] = []
+            for item in call_stack {
+              nested_call_stack.push(item)
+            }
+            nested_call_stack.push(canonical_name)
+            if nested_call_stack.length() > FUNCTION_CALL_MAX_DEPTH {
+              semantic_error_with_stack(
+                errors,
+                call.line,
+                call.column,
+                "function call depth exceeded \{FUNCTION_CALL_MAX_DEPTH}",
+                nested_call_stack,
+              )
+              continue
+            }
+            let bound_args = match
+              bind_function_args(
+                canonical_name,
+                fn_decl,
+                positional_values,
+                keyword_values,
+                call.line,
+                call.column,
+                errors,
+                nested_call_stack,
+              ) {
+              Some(values) => values
+              None => continue
+            }
+            let local_bindings = copy_bindings(bindings)
+            for key, value in bound_args {
+              local_bindings[key] = value
+            }
+            let nested = parse_syntax(fn_decl.body)
+            for err in nested.errors {
+              errors.push(err)
+            }
+            let local_functions = copy_functions(functions)
+            let (next_name, next_parallel, next_seen, signal) = apply_calls(
+              nested.calls,
+              nodes,
+              tasks,
+              entry_targets,
+              local_bindings,
+              var_types,
+              required_pending,
+              required_locations,
+              external_inputs,
+              errors,
+              current_workflow_name,
+              current_max_parallel,
+              current_seen_workflow,
+              local_functions,
+              0,
+              nested_call_stack,
+            )
+            current_workflow_name = next_name
+            current_max_parallel = next_parallel
+            current_seen_workflow = next_seen
+            match signal {
+              Next => ()
+              ReturnFromBlock(_) => ()
+              BreakLoop => ()
+              ContinueLoop => ()
+            }
+          }
+          None =>
+            semantic_error(
+              errors,
+              call.line,
+              call.column,
+              "unknown statement: \{call.name}",
+            )
+        }
     }
   }
+
+  (current_workflow_name, current_max_parallel, current_seen_workflow, Next)
+}
+
+///|
+fn parse_calls_impl(
+  calls : Array[StarlarkCall],
+  syntax_errors : Array[String],
+  external_inputs : Map[String, String],
+) -> StarlarkParseResult {
+  let errors : Array[String] = []
+  for err in syntax_errors {
+    errors.push(err)
+  }
+
+  let nodes : Array[StarlarkNodeDecl] = []
+  let tasks : Array[StarlarkTaskDecl] = []
+  let entry_targets : Array[String] = []
+  let mut workflow_name = "default"
+  let mut max_parallel = 1
+  let seen_workflow = false
+  let bindings : Map[String, StarlarkValue] = {}
+  let var_types : Map[String, String] = {}
+  let required_pending : Map[String, Bool] = {}
+  let required_locations : Map[String, (Int, Int)] = {}
+  let functions : Map[String, StarlarkFunctionDecl] = {}
+
+  let (resolved_workflow_name, resolved_max_parallel, _, _) = apply_calls(
+    calls,
+    nodes,
+    tasks,
+    entry_targets,
+    bindings,
+    var_types,
+    required_pending,
+    required_locations,
+    external_inputs,
+    errors,
+    workflow_name,
+    max_parallel,
+    seen_workflow,
+    functions,
+    0,
+    [],
+  )
+  workflow_name = resolved_workflow_name
+  max_parallel = resolved_max_parallel
 
   for name, is_pending in required_pending {
     if is_pending {

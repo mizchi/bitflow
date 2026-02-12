@@ -128,3 +128,15 @@ entrypoint(targets=["missing:entry"])
 # expect.steps=
 # expect.issues_contains=node: node 'root' depends on unknown node 'missing',duplicate task id 'dup',task 'dup' targets unknown node 'ghost',task 'dup' depends on unknown task 'missing:task',entry target 'missing:entry' does not exist
 # expect.issues_count=6
+---
+# case=while_inline_duplicate_task_ids
+counter = 0
+workflow(name="ci")
+node(id="n", depends_on=[])
+while counter < 2: task(id="n:dup", node="n", cmd="run", needs=[]); counter = counter + 1
+entrypoint(targets=["n:dup"])
+# expect.ok=false
+# expect.state=invalid
+# expect.order=
+# expect.steps=
+# expect.issues_contains=duplicate task id 'n:dup'

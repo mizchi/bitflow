@@ -11,6 +11,7 @@ priv enum StarlarkValue {
   Index(StarlarkValue, StarlarkValue)
   Slice(StarlarkValue, StarlarkValue?, StarlarkValue?)
   MethodCall(StarlarkValue, String, Array[StarlarkValue])
+  CallKwArg(String, StarlarkValue)
   Call(String, Array[StarlarkValue])
   Add(StarlarkValue, StarlarkValue)
   Sub(StarlarkValue, StarlarkValue)
@@ -71,12 +72,20 @@ priv struct StarlarkParser {
   mut idx : Int
   mut line : Int
   mut column : Int
+  mut skip_statement_end_once : Bool
   errors : Array[String]
 }
 
 ///|
 fn parser_new(text : String) -> StarlarkParser {
-  { text, idx: 0, line: 1, column: 1, errors: [] }
+  {
+    text,
+    idx: 0,
+    line: 1,
+    column: 1,
+    skip_statement_end_once: false,
+    errors: [],
+  }
 }
 
 ///|
@@ -846,6 +855,17 @@ fn StarlarkParser::parse_method_call_with_receiver(
       }
     }
     self.skip_value_space()
+    if self.peek() is Some('=') {
+      self.push_error("keyword argument must have form name=expr")
+      self.recover_to_arg_boundary()
+      if self.consume_char(')') {
+        break
+      }
+      if self.consume_char(',') {
+        continue
+      }
+      break
+    }
     if self.consume_char(',') {
       self.skip_value_space()
       if self.consume_char(')') {
@@ -889,14 +909,52 @@ fn StarlarkParser::parse_expr_call_with_name(
   name : String,
 ) -> StarlarkValue? {
   let args : Array[StarlarkValue] = []
+  let mut seen_keyword = false
   self.skip_value_space()
   if self.consume_char(')') {
     return Some(Call(name, args))
   }
   while true {
-    match self.parse_value() {
-      Some(value) => args.push(value)
-      None => {
+    self.skip_value_space()
+    if self.peek() is None {
+      self.push_error("expected ')' to close argument list")
+      break
+    }
+    let saved_idx = self.idx
+    let saved_line = self.line
+    let saved_col = self.column
+    let mut parsed_keyword = false
+    if self.parse_identifier() is Some(arg_name) {
+      self.skip_value_space()
+      if self.consume_char('=') {
+        parsed_keyword = true
+        seen_keyword = true
+        match self.parse_value() {
+          Some(value) => args.push(CallKwArg(arg_name, value))
+          None => {
+            self.recover_to_arg_boundary()
+            if self.consume_char(')') {
+              break
+            }
+            if self.consume_char(',') {
+              continue
+            }
+            break
+          }
+        }
+      } else {
+        self.idx = saved_idx
+        self.line = saved_line
+        self.column = saved_col
+      }
+    } else {
+      self.idx = saved_idx
+      self.line = saved_line
+      self.column = saved_col
+    }
+    if not(parsed_keyword) {
+      if seen_keyword {
+        self.push_error("positional argument cannot follow keyword argument")
         self.recover_to_arg_boundary()
         if self.consume_char(')') {
           break
@@ -906,8 +964,32 @@ fn StarlarkParser::parse_expr_call_with_name(
         }
         break
       }
+      match self.parse_value() {
+        Some(value) => args.push(value)
+        None => {
+          self.recover_to_arg_boundary()
+          if self.consume_char(')') {
+            break
+          }
+          if self.consume_char(',') {
+            continue
+          }
+          break
+        }
+      }
     }
     self.skip_value_space()
+    if self.peek() is Some('=') {
+      self.push_error("keyword argument must have form name=expr")
+      self.recover_to_arg_boundary()
+      if self.consume_char(')') {
+        break
+      }
+      if self.consume_char(',') {
+        continue
+      }
+      break
+    }
     if self.consume_char(',') {
       self.skip_value_space()
       if self.consume_char(')') {
@@ -1023,25 +1105,35 @@ fn StarlarkParser::parse_load_path_arg(
 }
 
 ///|
-fn StarlarkParser::parse_load_import_arg(self : StarlarkParser) -> Bool {
+fn StarlarkParser::parse_load_import_arg(
+  self : StarlarkParser,
+) -> (String, String)? {
   if self.peek() is Some(ch) && (ch == '"' || ch.to_int() == 39) {
-    return self.parse_string() is Some(_)
+    return match self.parse_string() {
+      Some(Str(name)) => Some((name, name))
+      Some(_) => None
+      None => None
+    }
   }
   if self.peek() is Some('*') {
     self.push_error("splat arguments are not supported")
-    return false
+    return None
   }
-  guard self.parse_identifier() is Some(_alias_name) else {
+  guard self.parse_identifier() is Some(alias_name) else {
     self.push_error("load() import must be string or alias=\"symbol\"")
-    return false
+    return None
   }
   self.skip_value_space()
   if not(self.consume_char('=')) {
     self.push_error("load() import must be string or alias=\"symbol\"")
-    return false
+    return None
   }
   self.skip_value_space()
-  self.parse_string() is Some(_)
+  match self.parse_string() {
+    Some(Str(symbol_name)) => Some((alias_name, symbol_name))
+    Some(_) => None
+    None => None
+  }
 }
 
 ///|
@@ -1052,6 +1144,7 @@ fn StarlarkParser::parse_load_call(
   start_col : Int,
 ) -> StarlarkCall {
   let args : Array[StarlarkArg] = []
+  let imports : Map[String, StarlarkValue] = {}
   self.skip_value_space()
   if self.consume_char(')') {
     self.push_error("load() requires path argument")
@@ -1091,12 +1184,28 @@ fn StarlarkParser::parse_load_call(
       self.push_error("expected ')' to close load()")
       break
     }
-    if not(self.parse_load_import_arg()) {
-      self.recover_to_arg_boundary()
-      if self.consume_char(')') {
-        break
+    match self.parse_load_import_arg() {
+      Some((local_name, symbol_name)) =>
+        if imports.get(local_name) is Some(_) {
+          self.push_error("duplicate load() import '\{local_name}'")
+        } else {
+          imports[local_name] = Str(symbol_name)
+        }
+      None => {
+        self.recover_to_arg_boundary()
+        if self.consume_char(')') {
+          break
+        }
       }
     }
+  }
+  if imports.length() > 0 {
+    args.push({
+      name: "imports",
+      value: Dict(imports),
+      line: start_line,
+      column: start_col,
+    })
   }
 
   { name, args, line: start_line, column: start_col }
@@ -1117,6 +1226,8 @@ fn StarlarkParser::parse_call_with_name(
     return Some(self.parse_load_call(name, start_line, start_col))
   }
   let args : Array[StarlarkArg] = []
+  let mut positional_index = 0
+  let mut seen_keyword = false
   self.skip_value_space()
   if self.consume_char(')') {
     return Some({ name, args, line: start_line, column: start_col })
@@ -1140,33 +1251,42 @@ fn StarlarkParser::parse_call_with_name(
     }
     let arg_line = self.line
     let arg_col = self.column
-    guard self.parse_identifier() is Some(arg_name) else {
-      self.push_error("keyword argument must have form name=expr")
-      self.recover_to_arg_boundary()
-      if self.consume_char(')') {
-        break
+    let saved_idx = self.idx
+    let saved_line = self.line
+    let saved_col = self.column
+    let mut parsed_keyword = false
+    if self.parse_identifier() is Some(arg_name) {
+      self.skip_value_space()
+      if self.consume_char('=') {
+        parsed_keyword = true
+        seen_keyword = true
+        match self.parse_value() {
+          Some(value) =>
+            args.push({ name: arg_name, value, line: arg_line, column: arg_col })
+          None => {
+            self.recover_to_arg_boundary()
+            if self.consume_char(')') {
+              break
+            }
+            if self.consume_char(',') {
+              continue
+            }
+            break
+          }
+        }
+      } else {
+        self.idx = saved_idx
+        self.line = saved_line
+        self.column = saved_col
       }
-      if self.consume_char(',') {
-        continue
-      }
-      break
+    } else {
+      self.idx = saved_idx
+      self.line = saved_line
+      self.column = saved_col
     }
-    self.skip_value_space()
-    if not(self.consume_char('=')) {
-      self.push_error("keyword argument must have form name=expr")
-      self.recover_to_arg_boundary()
-      if self.consume_char(')') {
-        break
-      }
-      if self.consume_char(',') {
-        continue
-      }
-      break
-    }
-    match self.parse_value() {
-      Some(value) =>
-        args.push({ name: arg_name, value, line: arg_line, column: arg_col })
-      None => {
+    if not(parsed_keyword) {
+      if seen_keyword {
+        self.push_error("positional argument cannot follow keyword argument")
         self.recover_to_arg_boundary()
         if self.consume_char(')') {
           break
@@ -1176,8 +1296,36 @@ fn StarlarkParser::parse_call_with_name(
         }
         break
       }
+      match self.parse_value() {
+        Some(value) => {
+          let pos_name = "$pos\{positional_index}"
+          positional_index += 1
+          args.push({ name: pos_name, value, line: arg_line, column: arg_col })
+        }
+        None => {
+          self.recover_to_arg_boundary()
+          if self.consume_char(')') {
+            break
+          }
+          if self.consume_char(',') {
+            continue
+          }
+          break
+        }
+      }
     }
     self.skip_value_space()
+    if self.peek() is Some('=') {
+      self.push_error("keyword argument must have form name=expr")
+      self.recover_to_arg_boundary()
+      if self.consume_char(')') {
+        break
+      }
+      if self.consume_char(',') {
+        continue
+      }
+      break
+    }
     if self.consume_char(',') {
       self.skip_value_space()
       if self.consume_char(')') {
@@ -1223,12 +1371,571 @@ fn StarlarkParser::parse_assignment_with_name(
 }
 
 ///|
+fn line_has_non_space(text : String) -> Bool {
+  let mut i = 0
+  while i < text.length() {
+    if not(is_inline_space(text.unsafe_get(i))) {
+      return true
+    }
+    i += 1
+  }
+  false
+}
+
+///|
+fn line_is_empty_or_comment(text : String) -> Bool {
+  let mut i = 0
+  while i < text.length() {
+    let ch = text.unsafe_get(i)
+    if is_inline_space(ch) {
+      i += 1
+      continue
+    }
+    return ch == '#'
+  }
+  true
+}
+
+///|
+fn StarlarkParser::parse_inline_suite_source(
+  self : StarlarkParser,
+  owner : String,
+) -> String? {
+  self.skip_inline_space()
+  let start = self.idx
+  while self.peek() is Some(ch) {
+    if ch == '\n' {
+      break
+    }
+    self.advance() |> ignore
+  }
+  let body = String::unsafe_substring(self.text, start~, end=self.idx)
+  if line_has_non_space(body) {
+    Some(body)
+  } else {
+    self.push_error("expected statement body after \{owner}")
+    None
+  }
+}
+
+///|
+fn StarlarkParser::parse_block_suite_source(
+  self : StarlarkParser,
+  owner : String,
+  base_indent : Int,
+) -> String? {
+  let lines : Array[String] = []
+  let mut suite_indent = -1
+
+  while true {
+    if self.peek() is None {
+      break
+    }
+    let line_start_idx = self.idx
+    let line_start_line = self.line
+    let line_start_col = self.column
+    let mut indent = 0
+    while self.peek() is Some(ch) {
+      if is_inline_space(ch) {
+        self.advance() |> ignore
+        indent += 1
+      } else {
+        break
+      }
+    }
+
+    let mut line_end = self.idx
+    while self.peek() is Some(ch) {
+      if ch == '\n' {
+        break
+      }
+      self.advance() |> ignore
+      line_end = self.idx
+    }
+    let raw_line = String::unsafe_substring(
+      self.text,
+      start=line_start_idx,
+      end=line_end,
+    )
+    if line_is_empty_or_comment(raw_line) {
+      if self.peek() is Some('\n') {
+        self.advance() |> ignore
+      }
+      continue
+    }
+
+    if indent <= base_indent {
+      self.idx = line_start_idx
+      self.line = line_start_line
+      self.column = line_start_col
+      break
+    }
+    if suite_indent < 0 {
+      suite_indent = indent
+    } else if indent < suite_indent {
+      self.idx = line_start_idx
+      self.line = line_start_line
+      self.column = line_start_col
+      break
+    }
+
+    let body_start = line_start_idx + suite_indent
+    lines.push(
+      String::unsafe_substring(self.text, start=body_start, end=line_end),
+    )
+    if self.peek() is Some('\n') {
+      self.advance() |> ignore
+      continue
+    }
+    break
+  }
+
+  if lines.length() == 0 {
+    self.push_error("expected indented statement body after \{owner}")
+    None
+  } else {
+    Some(lines.join("\n"))
+  }
+}
+
+///|
+fn StarlarkParser::parse_suite_source(
+  self : StarlarkParser,
+  owner : String,
+  start_col : Int,
+) -> (String?, Bool) {
+  self.skip_inline_space()
+  if self.peek() is Some('#') {
+    self.skip_comment()
+  }
+  if self.peek() is Some('\n') {
+    self.advance() |> ignore
+    return (self.parse_block_suite_source(owner, start_col - 1), true)
+  }
+  (self.parse_inline_suite_source(owner), false)
+}
+
+///|
+fn source_with_elif_head_as_if(source : String) -> String {
+  let mut idx = 0
+  while idx < source.length() {
+    let ch = source.unsafe_get(idx)
+    if is_inline_space(ch) {
+      idx += 1
+      continue
+    }
+    break
+  }
+  if idx + 4 > source.length() {
+    return source
+  }
+  let head = String::unsafe_substring(source, start=idx, end=idx + 4)
+  if head != "elif" {
+    return source
+  }
+  let prefix = String::unsafe_substring(source, start=0, end=idx)
+  let suffix = String::unsafe_substring(
+    source,
+    start=idx + 4,
+    end=source.length(),
+  )
+  prefix + "if" + suffix
+}
+
+///|
+fn StarlarkParser::parse_if_else_source(
+  self : StarlarkParser,
+  start_col : Int,
+) -> (String, Bool)? {
+  let saved_idx = self.idx
+  let saved_line = self.line
+  let saved_col = self.column
+
+  let line_start_idx = self.idx
+  let mut indent = 0
+  while self.peek() is Some(ch) {
+    if is_inline_space(ch) {
+      self.advance() |> ignore
+      indent += 1
+    } else {
+      break
+    }
+  }
+
+  if indent != start_col - 1 {
+    self.idx = saved_idx
+    self.line = saved_line
+    self.column = saved_col
+    return None
+  }
+
+  let keyword_start_line = self.line
+  let keyword_start_col = self.column
+  guard self.parse_identifier() is Some(keyword) else {
+    self.idx = saved_idx
+    self.line = saved_line
+    self.column = saved_col
+    return None
+  }
+
+  if keyword == "else" {
+    self.skip_inline_space()
+    if not(self.consume_char(':')) {
+      self.push_error("expected ':' after else")
+    }
+    let (suite, consumed_newline) = self.parse_suite_source(
+      "else", keyword_start_col,
+    )
+    match suite {
+      Some(source) => Some((source, consumed_newline))
+      None => None
+    }
+  } else if keyword == "elif" {
+    let _ = self.parse_if_statement(keyword_start_line, keyword_start_col)
+    let raw = String::unsafe_substring(
+      self.text,
+      start=line_start_idx,
+      end=self.idx,
+    )
+    Some((source_with_elif_head_as_if(raw), true))
+  } else {
+    self.idx = saved_idx
+    self.line = saved_line
+    self.column = saved_col
+    None
+  }
+}
+
+///|
+fn StarlarkParser::parse_if_statement(
+  self : StarlarkParser,
+  start_line : Int,
+  start_col : Int,
+) -> StarlarkCall {
+  let args : Array[StarlarkArg] = []
+  self.skip_value_space()
+  let cond_line = self.line
+  let cond_col = self.column
+  match self.parse_value() {
+    Some(value) =>
+      args.push({ name: "cond", value, line: cond_line, column: cond_col })
+    None => ()
+  }
+  self.skip_inline_space()
+  if not(self.consume_char(':')) {
+    self.push_error("expected ':' after if condition")
+  }
+  let mut needs_skip_statement_end = false
+  let (suite, consumed_newline) = self.parse_suite_source("if", start_col)
+  if consumed_newline {
+    needs_skip_statement_end = true
+  }
+  match suite {
+    Some(body) =>
+      args.push({
+        name: "then",
+        value: Str(body),
+        line: start_line,
+        column: start_col,
+      })
+    None => ()
+  }
+  if consumed_newline {
+    match self.parse_if_else_source(start_col) {
+      Some((source, consumed_else_newline)) => {
+        args.push({
+          name: "else",
+          value: Str(source),
+          line: start_line,
+          column: start_col,
+        })
+        if consumed_else_newline {
+          needs_skip_statement_end = true
+        }
+      }
+      None => ()
+    }
+  }
+  if needs_skip_statement_end {
+    self.skip_statement_end_once = true
+  }
+  { name: "__if__", args, line: start_line, column: start_col }
+}
+
+///|
+fn StarlarkParser::parse_for_statement(
+  self : StarlarkParser,
+  start_line : Int,
+  start_col : Int,
+) -> StarlarkCall {
+  let args : Array[StarlarkArg] = []
+  self.skip_value_space()
+  let name_line = self.line
+  let name_col = self.column
+  match self.parse_identifier() {
+    Some(loop_name) =>
+      args.push({
+        name: "name",
+        value: Str(loop_name),
+        line: name_line,
+        column: name_col,
+      })
+    None => self.push_error("expected loop variable after for")
+  }
+
+  self.skip_value_space()
+  if not(self.consume_keyword("in")) {
+    self.push_error("expected 'in' after for loop variable")
+  }
+
+  self.skip_value_space()
+  let iter_line = self.line
+  let iter_col = self.column
+  match self.parse_value() {
+    Some(value) =>
+      args.push({ name: "iter", value, line: iter_line, column: iter_col })
+    None => ()
+  }
+
+  self.skip_inline_space()
+  if not(self.consume_char(':')) {
+    self.push_error("expected ':' after for iterable")
+  }
+  let (suite, consumed_newline) = self.parse_suite_source("for", start_col)
+  if consumed_newline {
+    self.skip_statement_end_once = true
+  }
+  match suite {
+    Some(body) =>
+      args.push({
+        name: "body",
+        value: Str(body),
+        line: start_line,
+        column: start_col,
+      })
+    None => ()
+  }
+  { name: "__for__", args, line: start_line, column: start_col }
+}
+
+///|
+fn StarlarkParser::parse_while_statement(
+  self : StarlarkParser,
+  start_line : Int,
+  start_col : Int,
+) -> StarlarkCall {
+  let args : Array[StarlarkArg] = []
+  self.skip_value_space()
+  let cond_line = self.line
+  let cond_col = self.column
+  match self.parse_value() {
+    Some(value) =>
+      args.push({ name: "cond", value, line: cond_line, column: cond_col })
+    None => ()
+  }
+  self.skip_inline_space()
+  if not(self.consume_char(':')) {
+    self.push_error("expected ':' after while condition")
+  }
+  let (suite, consumed_newline) = self.parse_suite_source("while", start_col)
+  if consumed_newline {
+    self.skip_statement_end_once = true
+  }
+  match suite {
+    Some(body) =>
+      args.push({
+        name: "body",
+        value: Str(body),
+        line: start_line,
+        column: start_col,
+      })
+    None => ()
+  }
+  { name: "__while__", args, line: start_line, column: start_col }
+}
+
+///|
+fn StarlarkParser::parse_def_statement(
+  self : StarlarkParser,
+  start_line : Int,
+  start_col : Int,
+) -> StarlarkCall {
+  let args : Array[StarlarkArg] = []
+  self.skip_value_space()
+  let name_line = self.line
+  let name_col = self.column
+  let mut fn_name = ""
+  match self.parse_identifier() {
+    Some(value) => fn_name = value
+    None => self.push_error("expected function name after def")
+  }
+  if fn_name.length() > 0 {
+    args.push({
+      name: "name",
+      value: Str(fn_name),
+      line: name_line,
+      column: name_col,
+    })
+  }
+  self.skip_inline_space()
+  if not(self.consume_char('(')) {
+    self.push_error("expected '(' after function name")
+  }
+  let params : Array[StarlarkValue] = []
+  let defaults : Map[String, StarlarkValue] = {}
+  let mut seen_default = false
+  self.skip_value_space()
+  if not(self.consume_char(')')) {
+    while true {
+      self.skip_value_space()
+      match self.parse_identifier() {
+        Some(param_name) => {
+          self.skip_value_space()
+          if self.consume_char('=') {
+            seen_default = true
+            self.skip_value_space()
+            match self.parse_value() {
+              Some(default_value) => defaults[param_name] = default_value
+              None => ()
+            }
+          } else if seen_default {
+            self.push_error("non-default parameter follows default parameter")
+          }
+          params.push(Str(param_name))
+        }
+        None => {
+          self.push_error("expected parameter name in def signature")
+          self.recover_to_arg_boundary()
+          if self.consume_char(')') {
+            break
+          }
+          if self.consume_char(',') {
+            continue
+          }
+          break
+        }
+      }
+      self.skip_value_space()
+      if self.consume_char(',') {
+        self.skip_value_space()
+        if self.consume_char(')') {
+          break
+        }
+        continue
+      }
+      if self.consume_char(')') {
+        break
+      }
+      self.push_error("expected ',' or ')' after def parameter")
+      self.recover_to_arg_boundary()
+      if self.consume_char(')') {
+        break
+      }
+      if self.consume_char(',') {
+        continue
+      }
+      break
+    }
+  }
+  args.push({
+    name: "params",
+    value: List(params),
+    line: start_line,
+    column: start_col,
+  })
+  if defaults.length() > 0 {
+    args.push({
+      name: "defaults",
+      value: Dict(defaults),
+      line: start_line,
+      column: start_col,
+    })
+  }
+  self.skip_inline_space()
+  if not(self.consume_char(':')) {
+    self.push_error("expected ':' after def signature")
+  }
+  let (suite, consumed_newline) = self.parse_suite_source("def", start_col)
+  if consumed_newline {
+    self.skip_statement_end_once = true
+  }
+  match suite {
+    Some(body) =>
+      args.push({
+        name: "body",
+        value: Str(body),
+        line: start_line,
+        column: start_col,
+      })
+    None => ()
+  }
+  { name: "__def__", args, line: start_line, column: start_col }
+}
+
+///|
+fn StarlarkParser::parse_return_statement(
+  self : StarlarkParser,
+  start_line : Int,
+  start_col : Int,
+) -> StarlarkCall {
+  let args : Array[StarlarkArg] = []
+  self.skip_inline_space()
+  let has_value = match self.peek() {
+    Some('\n') => false
+    Some(';') => false
+    Some('#') => false
+    Some(_) => true
+    None => false
+  }
+  if has_value {
+    let value_line = self.line
+    let value_col = self.column
+    match self.parse_value() {
+      Some(value) =>
+        args.push({ name: "value", value, line: value_line, column: value_col })
+      None => ()
+    }
+  }
+  { name: "__return__", args, line: start_line, column: start_col }
+}
+
+///|
+fn parse_control_statement(
+  name : String,
+  start_line : Int,
+  start_col : Int,
+) -> StarlarkCall {
+  { name, args: [], line: start_line, column: start_col }
+}
+
+///|
 fn StarlarkParser::parse_statement(self : StarlarkParser) -> StarlarkCall? {
   let start_line = self.line
   let start_col = self.column
   guard self.parse_identifier() is Some(name) else {
     self.push_error("expected statement name")
     return None
+  }
+  if name == "if" {
+    return Some(self.parse_if_statement(start_line, start_col))
+  }
+  if name == "for" {
+    return Some(self.parse_for_statement(start_line, start_col))
+  }
+  if name == "while" {
+    return Some(self.parse_while_statement(start_line, start_col))
+  }
+  if name == "def" {
+    return Some(self.parse_def_statement(start_line, start_col))
+  }
+  if name == "return" {
+    return Some(self.parse_return_statement(start_line, start_col))
+  }
+  if name == "break" {
+    return Some(parse_control_statement("__break__", start_line, start_col))
+  }
+  if name == "continue" {
+    return Some(parse_control_statement("__continue__", start_line, start_col))
   }
   self.skip_inline_space()
   if self.consume_char('=') {
@@ -1252,6 +1959,11 @@ fn StarlarkParser::recover_to_statement_boundary(self : StarlarkParser) -> Unit 
 
 ///|
 fn StarlarkParser::consume_statement_end(self : StarlarkParser) -> Unit {
+  if self.skip_statement_end_once {
+    self.skip_statement_end_once = false
+    self.skip_statement_separators()
+    return
+  }
   self.skip_inline_space()
   if self.peek() is None {
     return

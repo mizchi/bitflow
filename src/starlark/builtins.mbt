@@ -78,7 +78,7 @@ fn builtin_specs() -> Array[StarlarkBuiltinSpec] {
     {
       canonical_name: "load",
       names: ["load"],
-      args: [builtin_arg("path", required=true)],
+      args: [builtin_arg("path", required=true), builtin_arg("imports")],
     },
     {
       canonical_name: "__assign__",
@@ -88,6 +88,49 @@ fn builtin_specs() -> Array[StarlarkBuiltinSpec] {
         builtin_arg("value", required=true),
       ],
     },
+    {
+      canonical_name: "__if__",
+      names: ["__if__"],
+      args: [
+        builtin_arg("cond", required=true),
+        builtin_arg("then", required=true),
+        builtin_arg("else"),
+      ],
+    },
+    {
+      canonical_name: "__for__",
+      names: ["__for__"],
+      args: [
+        builtin_arg("name", required=true),
+        builtin_arg("iter", required=true),
+        builtin_arg("body", required=true),
+      ],
+    },
+    {
+      canonical_name: "__while__",
+      names: ["__while__"],
+      args: [
+        builtin_arg("cond", required=true),
+        builtin_arg("body", required=true),
+      ],
+    },
+    {
+      canonical_name: "__def__",
+      names: ["__def__"],
+      args: [
+        builtin_arg("name", required=true),
+        builtin_arg("params", required=true),
+        builtin_arg("defaults"),
+        builtin_arg("body", required=true),
+      ],
+    },
+    {
+      canonical_name: "__return__",
+      names: ["__return__"],
+      args: [builtin_arg("value")],
+    },
+    { canonical_name: "__break__", names: ["__break__"], args: [] },
+    { canonical_name: "__continue__", names: ["__continue__"], args: [] },
   ]
 }
 

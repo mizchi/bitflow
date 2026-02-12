@@ -75,6 +75,41 @@ The implementation is organized in three layers:
   via `..` is rejected)
 - changed-path entry target selection matches both `task.srcs` and `task.outs`
 
+### Supported Range (Workflow DSL Subset)
+
+- **Program structure**:
+  top-level call statements, simple assignments, and control statements
+  (`if`, `for`, `while`) for call expansion.
+  Control-transfer statements `return`, `break`, and `continue` are supported
+  in control-flow suites (`break`/`continue` only inside loops).
+  User-defined statement functions (`def name(...): ...`) are supported with
+  keyword-argument invocation.
+- **Top-level DSL calls**:
+  `workflow`, `node`, `task` (`target` alias), `entrypoint`, `var`, `config`,
+  `load`.
+- **Literal / collection expressions**:
+  `string`, `int`, `bool`, `None`, `list`, `dict`, `tuple`.
+- **Operators**:
+  arithmetic (`+`, `-`, `*`, `//`, `%`), logical (`and`, `or`, `not`),
+  comparisons (`==`, `!=`, `<`, `<=`, `>`, `>=`), chained comparisons,
+  membership (`in`, `not in`), conditional expression (`a if cond else b`).
+- **Access / call expressions**:
+  indexing, slicing, helper-function calls, selected method-call syntax.
+- **Practical compatibility**:
+  semicolon-separated calls, trailing commas, single quotes.
+  Control statements support both inline and indented block suites:
+  `if cond: statement`, `for name in values: statement`,
+  `while cond: statement`,
+  `if/elif/else ...:\n  ...`, `for ...:\n  ...`, `while ...:\n  ...`.
+
+### Out of Scope (Not Full Starlark VM)
+
+- Comprehensions, exceptions, lambdas, and mutable runtime objects.
+- General-purpose module system; `load` is constrained for workflow files
+  (`parse_from_fs*` path only, workspace-root bounded).
+- Arbitrary host side effects during evaluation; execution side effects are
+  handled by workflow execution layer / adapters.
+
 ## Example
 
 ```mbt
