@@ -64,7 +64,7 @@ fn starlark_builtin_specs() -> Array[StarlarkBuiltinSpec] {
         starlark_builtin_arg("name", required=true),
         starlark_builtin_arg("type"),
         starlark_builtin_arg("required"),
-        starlark_builtin_arg("default", required=true),
+        starlark_builtin_arg("default"),
       ],
     },
     {

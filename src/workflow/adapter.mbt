@@ -30,12 +30,12 @@ pub fn command_failure(
 
 ///|
 pub struct CommandAdapter {
-  run : (String, String?) -> CommandResult
+  run : (String, String?, Map[String, String]) -> CommandResult
 }
 
 ///|
 pub fn CommandAdapter::new(
-  run : (String, String?) -> CommandResult,
+  run : (String, String?, Map[String, String]) -> CommandResult,
 ) -> CommandAdapter {
   { run, }
 }
@@ -43,7 +43,7 @@ pub fn CommandAdapter::new(
 ///|
 pub fn CommandAdapter::none() -> CommandAdapter {
   {
-    run: fn(_cmd : String, _cwd : String?) {
+    run: fn(_cmd : String, _cwd : String?, _env : Map[String, String]) {
       command_failure(stderr="command adapter is not configured")
     },
   }

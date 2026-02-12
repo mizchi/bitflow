@@ -43,6 +43,22 @@ Supported forms:
 - `bitflow [check] <workflow.star> [--var KEY=VALUE]...`
 - env override prefix: `BITFLOW_VAR_`
 
+## Starlark Subset Contract
+
+This project intentionally implements a Starlark-based DSL subset for workflow
+definitions, not a full Starlark VM.
+
+- Supported top-level calls: `workflow`, `node`, `task` (`target` alias),
+  `entrypoint`, `var`, `config`, `load`
+- `var(required=True)` means the value must be provided by `config(...)` or
+  external inputs (`--var` / `BITFLOW_VAR_...`)
+- `var(default=...)` is still validated and bound, but does not satisfy the
+  `required=True` contract by itself
+- `load(...)` is supported only in fs parse mode and only as
+  `load("path.star")` / `load(path="path.star")`
+- `load` paths are normalized and must stay within workspace root (path escape
+  via `..` is rejected)
+
 ## Example
 
 ```mbt

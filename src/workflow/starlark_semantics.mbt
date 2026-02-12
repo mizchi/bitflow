@@ -109,6 +109,16 @@ fn starlark_arg_map_resolved(
 }
 
 ///|
+fn starlark_call_has_arg(call : StarlarkCall, key : String) -> Bool {
+  for arg in call.args {
+    if arg.name == key {
+      return true
+    }
+  }
+  false
+}
+
+///|
 fn starlark_validate_unknown_args(
   call : StarlarkCall,
   allowed : Array[String],
@@ -138,6 +148,11 @@ fn starlark_validate_call_shape(
   }
   for key in starlark_builtin_required_args(call.name) {
     if args.get(key) is None {
+      if starlark_call_has_arg(call, key) {
+        // The argument was provided syntactically but failed to resolve.
+        // Keep the root resolution error and skip noisy "required" reports.
+        continue
+      }
       starlark_semantic_error(
         errors,
         call.line,
@@ -656,6 +671,11 @@ fn starlark_apply_var_call(
   external_inputs : Map[String, String],
   errors : Array[String],
 ) -> Unit {
+  for key in ["name", "type", "required", "default"] {
+    if starlark_call_has_arg(call, key) && args.get(key) is None {
+      return
+    }
+  }
   let name_arg = match args.get("name") {
     Some(arg) => arg
     None => return

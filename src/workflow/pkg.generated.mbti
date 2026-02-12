@@ -66,9 +66,9 @@ pub fn write_execution_report(String, FlowExecutionResult, WorkflowAdapter) -> B
 
 // Types and methods
 pub struct CommandAdapter {
-  run : (String, String?) -> CommandResult
+  run : (String, String?, Map[String, String]) -> CommandResult
 }
-pub fn CommandAdapter::new((String, String?) -> CommandResult) -> Self
+pub fn CommandAdapter::new((String, String?, Map[String, String]) -> CommandResult) -> Self
 pub fn CommandAdapter::none() -> Self
 
 pub struct CommandResult {

@@ -31,7 +31,11 @@ test "workflow adapter: execute_ir_with_adapter propagates command results" {
   let ir = new_ir("ci", nodes, tasks, entry_targets=["root:test"])
   let adapter = WorkflowAdapter::new(
     FsAdapter::none(),
-    CommandAdapter::new(fn(cmd : String, _cwd : String?) {
+    CommandAdapter::new(fn(
+      cmd : String,
+      _cwd : String?,
+      _env : Map[String, String],
+    ) {
       if cmd == "test" {
         command_failure(stderr="tests failed")
       } else {
@@ -56,7 +60,11 @@ test "workflow adapter: failure message falls back to stdout when stderr is empt
   ])
   let adapter = WorkflowAdapter::new(
     FsAdapter::none(),
-    CommandAdapter::new(fn(_cmd : String, _cwd : String?) {
+    CommandAdapter::new(fn(
+      _cmd : String,
+      _cwd : String?,
+      _env : Map[String, String],
+    ) {
       command_failure(stdout="stdout failure", stderr="")
     }),
   )
@@ -69,6 +77,40 @@ test "workflow adapter: failure message falls back to stdout when stderr is empt
 }
 
 ///|
+test "workflow adapter: execute_ir_with_adapter passes cwd and env to command adapter" {
+  let ir = new_ir("ci", [new_node("root", [])], [
+    new_task("root:build", "root", "build", [], cwd="packages/root", env={
+      "NODE_ENV": "test",
+    }),
+  ])
+  let seen_cmd : Array[String] = []
+  let seen_cwd : Array[String] = []
+  let seen_node_env : Array[String] = []
+  let adapter = WorkflowAdapter::new(
+    FsAdapter::none(),
+    CommandAdapter::new(fn(
+      cmd : String,
+      cwd : String?,
+      env : Map[String, String],
+    ) {
+      seen_cmd.push(cmd)
+      let cwd_text = match cwd {
+        Some(path) => path
+        None => ""
+      }
+      seen_cwd.push(cwd_text)
+      seen_node_env.push(env.get("NODE_ENV").unwrap_or(""))
+      command_success(stdout="ok")
+    }),
+  )
+  let result = execute_ir_with_adapter(ir, adapter)
+  assert_eq(result.ok, true)
+  assert_eq(seen_cmd.join(","), "build")
+  assert_eq(seen_cwd.join(","), "packages/root")
+  assert_eq(seen_node_env.join(","), "test")
+}
+
+///|
 test "workflow adapter: fs-backed starlark run and report write" {
   let src =
     #|workflow(name="ci")
@@ -77,7 +119,11 @@ test "workflow adapter: fs-backed starlark run and report write" {
     #|entrypoint(targets=["root:build"])
   let adapter = WorkflowAdapter::new(
     FsAdapter::memory_with({ "workflow.star": src }),
-    CommandAdapter::new(fn(cmd : String, _cwd : String?) {
+    CommandAdapter::new(fn(
+      cmd : String,
+      _cwd : String?,
+      _env : Map[String, String],
+    ) {
       command_success(stdout="ran:" + cmd)
     }),
   )
@@ -131,7 +177,11 @@ test "workflow adapter: fs-backed starlark execute accepts external inputs" {
     #|entrypoint(targets=["root:build"])
   let adapter = WorkflowAdapter::new(
     FsAdapter::memory_with({ "workflow.star": src }),
-    CommandAdapter::new(fn(cmd : String, _cwd : String?) {
+    CommandAdapter::new(fn(
+      cmd : String,
+      _cwd : String?,
+      _env : Map[String, String],
+    ) {
       command_success(stdout="ran:" + cmd)
     }),
   )
@@ -213,7 +263,11 @@ test "workflow adapter: starlark load() merges external files from fs" {
       "workflow.star": root_src,
       "defs/common.star": common_src,
     }),
-    CommandAdapter::new(fn(cmd : String, _cwd : String?) {
+    CommandAdapter::new(fn(
+      cmd : String,
+      _cwd : String?,
+      _env : Map[String, String],
+    ) {
       command_success(stdout="ran:" + cmd)
     }),
   )
@@ -258,6 +312,25 @@ test "workflow adapter: starlark load() reports missing file" {
   let text = parsed.errors.join("\n")
   assert_true(text.contains("failed to read loaded file"))
   assert_true(text.contains("defs/missing.star"))
+}
+
+///|
+test "workflow adapter: starlark load() rejects path outside workspace root" {
+  let root_src =
+    #|load("../outside.star")
+    #|workflow(name="ci")
+  let outside_src =
+    #|node(id="root", depends_on=[])
+  let adapter = WorkflowAdapter::new(
+    FsAdapter::memory_with({
+      "workflow.star": root_src,
+      "../outside.star": outside_src,
+    }),
+    CommandAdapter::none(),
+  )
+  let parsed = parse_starlark_subset_from_fs("workflow.star", adapter)
+  let text = parsed.errors.join("\n")
+  assert_true(text.contains("load path escapes workspace root"))
 }
 
 ///|

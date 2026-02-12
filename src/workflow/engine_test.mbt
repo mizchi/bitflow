@@ -369,6 +369,19 @@ test "workflow engine: execute_ir returns invalid when ir has issues" {
 }
 
 ///|
+test "workflow engine: ir issues reports non-positive max_parallel" {
+  let ir = new_ir(
+    "ci",
+    [new_node("root", [])],
+    [new_task("root:build", "root", "build", [])],
+    max_parallel=0,
+  )
+  let issues = ir_issues(ir)
+  let text = issues.join("\n")
+  assert_true(text.contains("workflow.max_parallel must be positive"))
+}
+
+///|
 test "workflow engine: starlark subset parses and runs" {
   let src =
     #|workflow(name="ci", max_parallel=4)
@@ -645,6 +658,20 @@ test "workflow engine: starlark required var can be injected by external inputs"
 }
 
 ///|
+test "workflow engine: starlark required var allows missing default with external input" {
+  let src =
+    #|var(name="profile", type="string", required=True)
+    #|workflow(name=profile)
+    #|node(id="root", depends_on=[])
+    #|task(id="root:build", node="root", cmd=["echo", profile], needs=[])
+    #|entrypoint(targets=["root:build"])
+  let parsed = parse_starlark_subset_with_inputs(src, { "profile": "prod" })
+  assert_eq(parsed.errors.length(), 0)
+  assert_eq(parsed.ir.name, "prod")
+  assert_eq(parsed.ir.tasks[0].cmd, "echo prod")
+}
+
+///|
 test "workflow engine: starlark required var reports error when unresolved" {
   let src =
     #|var(name="profile", type="string", required=True, default="dev")
@@ -654,6 +681,33 @@ test "workflow engine: starlark required var reports error when unresolved" {
   let parsed = parse_starlark_subset(src)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("required var 'profile' must be provided"))
+}
+
+///|
+test "workflow engine: starlark non-required var without default reports semantic error" {
+  let src =
+    #|var(name="profile")
+  let parsed = parse_starlark_subset(src)
+  let text = parsed.errors.join("\n")
+  assert_true(
+    text.contains("var.default is required when var.required is false"),
+  )
+}
+
+///|
+test "workflow engine: starlark unresolved var default does not emit required-var noise" {
+  let src =
+    #|var(name="profile", required=True, default=unknown_profile)
+    #|workflow(name="ci")
+  let parsed = parse_starlark_subset(src)
+  let text = parsed.errors.join("\n")
+  assert_true(text.contains("unknown variable 'unknown_profile'"))
+  assert_eq(
+    text.contains(
+      "required var 'profile' must be provided by config() or external inputs",
+    ),
+    false,
+  )
 }
 
 ///|
@@ -668,6 +722,17 @@ test "workflow engine: starlark required var is resolved by config override" {
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.name, "prod")
   assert_eq(parsed.ir.tasks[0].cmd, "echo prod")
+}
+
+///|
+test "workflow engine: starlark config before var reports declaration-order error" {
+  let src =
+    #|config(name="profile", value="prod")
+    #|var(name="profile", default="dev")
+    #|workflow(name=profile)
+  let parsed = parse_starlark_subset(src)
+  let text = parsed.errors.join("\n")
+  assert_true(text.contains("config.name 'profile' is not declared by var()"))
 }
 
 ///|
@@ -725,6 +790,13 @@ test "workflow engine: parse_external_inputs reports malformed cli and env entri
   assert_true(text.contains("expects key=value"))
   assert_true(text.contains("must be key=value"))
   assert_true(text.contains("env var key is empty"))
+}
+
+///|
+test "workflow engine: parse_external_inputs trims cli key and value" {
+  let result = parse_external_inputs(["--var", " profile = prod "], {})
+  assert_eq(result.errors.length(), 0)
+  assert_eq(result.values.get("profile"), Some("prod"))
 }
 
 ///|

@@ -81,6 +81,12 @@ test {
 `parse_starlark_subset_from_fs` / `execute_starlark_subset_from_fs` supports
 `load("path.star")` to split workflow definitions.
 
+`load` is a DSL subset feature:
+
+- supported forms are `load("path.star")` and `load(path="path.star")`
+- resolved paths are normalized
+- paths outside workspace root are rejected
+
 ```mbt check
 ///|
 test {
@@ -106,6 +112,8 @@ test {
 ## adapter APIs
 
 Use `WorkflowAdapter` to wire command and filesystem behavior from outside.
+`CommandAdapter::new` receives `(cmd, cwd, env)` so task-level `cwd` / `env`
+can be consumed by the host runner.
 
 ```mbt check
 ///|
@@ -117,7 +125,11 @@ test {
     #|entrypoint(targets=["root:build"])
   let adapter = WorkflowAdapter::new(
     FsAdapter::memory_with({ "workflow.star": src }),
-    CommandAdapter::new(fn(_cmd : String, _cwd : String?) {
+    CommandAdapter::new(fn(
+      _cmd : String,
+      _cwd : String?,
+      _env : Map[String, String],
+    ) {
       command_success(stdout="ok")
     }),
   )

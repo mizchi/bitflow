@@ -51,6 +51,33 @@ pub struct ExternalInputParseResult {
 }
 
 ///|
+fn trim_ascii_space(text : String) -> String {
+  let mut start = 0
+  let mut end = text.length()
+  while start < end {
+    let ch = text.unsafe_get(start)
+    if ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' {
+      start += 1
+    } else {
+      break
+    }
+  }
+  while end > start {
+    let ch = text.unsafe_get(end - 1)
+    if ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' {
+      end -= 1
+    } else {
+      break
+    }
+  }
+  if start == 0 && end == text.length() {
+    text
+  } else {
+    String::unsafe_substring(text, start~, end~)
+  }
+}
+
+///|
 fn parse_external_input_assignment(
   raw : String,
   source : String,
@@ -60,12 +87,16 @@ fn parse_external_input_assignment(
     errors.push(source + " must be key=value")
     return None
   }
-  let name = String::unsafe_substring(raw, start=0, end=eq_idx)
+  let name = trim_ascii_space(
+    String::unsafe_substring(raw, start=0, end=eq_idx),
+  )
   if name.length() == 0 {
     errors.push(source + " key is empty")
     return None
   }
-  let value = String::unsafe_substring(raw, start=eq_idx + 1, end=raw.length())
+  let value = trim_ascii_space(
+    String::unsafe_substring(raw, start=eq_idx + 1, end=raw.length()),
+  )
   Some((name, value))
 }
 
@@ -307,6 +338,9 @@ pub fn entry_targets_for_changed_paths(
 ///|
 pub fn ir_issues(ir : FlowIr) -> Array[String] {
   let issues : Array[String] = []
+  if ir.max_parallel <= 0 {
+    issues.push("workflow.max_parallel must be positive")
+  }
   for issue in graph_issues(ir.nodes) {
     issues.push("node: " + issue)
   }
@@ -360,63 +394,105 @@ pub fn execute_ir(
   }
   let selected = selected_task_set(ir)
   let task_map = task_node_map(ir.tasks)
-  let ordered = topological_nodes(task_as_graph_nodes(ir.tasks))
+  let selected_tasks : Array[FlowTask] = []
+  for task in ir.tasks {
+    if selected.get(task.id) is Some(_) {
+      selected_tasks.push(task)
+    }
+  }
+  let remaining_deps : Map[String, Int] = {}
+  let dependents : Map[String, Array[String]] = {}
+  for task in selected_tasks {
+    remaining_deps[task.id] = 0
+    dependents[task.id] = []
+  }
+  for task in selected_tasks {
+    let mut dep_count = 0
+    for dep in task.needs {
+      if selected.get(dep) is Some(_) {
+        dep_count += 1
+        let next = dependents.get(dep).unwrap_or([])
+        next.push(task.id)
+        dependents[dep] = next
+      }
+    }
+    remaining_deps[task.id] = dep_count
+  }
+  let ready_queue : Array[String] = []
+  for task in selected_tasks {
+    if remaining_deps.get(task.id).unwrap_or(0) == 0 {
+      ready_queue.push(task.id)
+    }
+  }
+  let mut ready_idx = 0
   let steps : Array[FlowStep] = []
   let order : Array[String] = []
   let success : Map[String, Bool] = {}
   let mut required_failed = false
-  for task_node in ordered {
-    let id = task_node.id
-    if selected.get(id) is None {
-      continue
+  while ready_idx < ready_queue.length() {
+    let batch_ids : Array[String] = []
+    let mut slots = 0
+    while ready_idx < ready_queue.length() && slots < ir.max_parallel {
+      batch_ids.push(ready_queue[ready_idx])
+      ready_idx += 1
+      slots += 1
     }
-    order.push(id)
-    guard task_map.get(id) is Some(task) else { continue }
-    let blocked_deps : Array[String] = []
-    for dep in task.needs {
-      if selected.get(dep) is None {
-        continue
+    for id in batch_ids {
+      order.push(id)
+      guard task_map.get(id) is Some(task) else { continue }
+      let blocked_deps : Array[String] = []
+      for dep in task.needs {
+        if selected.get(dep) is None {
+          continue
+        }
+        if not(success.get(dep).unwrap_or(false)) {
+          blocked_deps.push(dep)
+        }
       }
-      if not(success.get(dep).unwrap_or(false)) {
-        blocked_deps.push(dep)
-      }
-    }
-    if blocked_deps.length() > 0 {
-      steps.push({
-        id: task.id,
-        status: "blocked",
-        required: task.required,
-        message: "blocked by dependency: " + blocked_deps.join(", "),
-      })
-      success[task.id] = false
-      if task.required {
-        required_failed = true
-      }
-      continue
-    }
-    let (ok, message) = run_task(task)
-    if ok {
-      steps.push({
-        id: task.id,
-        status: "success",
-        required: task.required,
-        message,
-      })
-      success[task.id] = true
-    } else {
-      steps.push({
-        id: task.id,
-        status: "failed",
-        required: task.required,
-        message: if message.length() == 0 {
-          "task failed"
+      if blocked_deps.length() > 0 {
+        steps.push({
+          id: task.id,
+          status: "blocked",
+          required: task.required,
+          message: "blocked by dependency: " + blocked_deps.join(", "),
+        })
+        success[task.id] = false
+        if task.required {
+          required_failed = true
+        }
+      } else {
+        let (ok, message) = run_task(task)
+        if ok {
+          steps.push({
+            id: task.id,
+            status: "success",
+            required: task.required,
+            message,
+          })
+          success[task.id] = true
         } else {
-          message
-        },
-      })
-      success[task.id] = false
-      if task.required {
-        required_failed = true
+          steps.push({
+            id: task.id,
+            status: "failed",
+            required: task.required,
+            message: if message.length() == 0 {
+              "task failed"
+            } else {
+              message
+            },
+          })
+          success[task.id] = false
+          if task.required {
+            required_failed = true
+          }
+        }
+      }
+      for dependent_id in dependents.get(id).unwrap_or([]) {
+        let next = remaining_deps.get(dependent_id).unwrap_or(0) - 1
+        remaining_deps[dependent_id] = next
+        if next == 0 {
+          ready_queue.push(dependent_id)
+        }
       }
     }
   }
@@ -567,7 +643,7 @@ pub fn execute_ir_with_adapter(
 ) -> FlowExecutionResult {
   execute_ir(ir, fn(task : FlowTask) {
     let cwd = if task.cwd.length() == 0 { None } else { Some(task.cwd) }
-    let result = (adapter.cmd.run)(task.cmd, cwd)
+    let result = (adapter.cmd.run)(task.cmd, cwd, task.env)
     (result.ok(), command_result_message(result))
   })
 }

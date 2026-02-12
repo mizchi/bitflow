@@ -55,6 +55,31 @@ fn starlark_resolve_load_path(base_path : String, raw_path : String) -> String {
 }
 
 ///|
+fn starlark_workspace_root_from_path(path : String) -> String {
+  if path.has_prefix("/") {
+    starlark_path_dirname(path)
+  } else {
+    "."
+  }
+}
+
+///|
+fn starlark_is_within_workspace_root(
+  workspace_root : String,
+  path : String,
+) -> Bool {
+  let root = starlark_path_normalize(workspace_root)
+  let target = starlark_path_normalize(path)
+  if root == "." {
+    return not(target.has_prefix("..")) && not(target.has_prefix("/"))
+  }
+  if root == "/" {
+    return target.has_prefix("/")
+  }
+  target == root || target.has_prefix(root + "/")
+}
+
+///|
 fn starlark_load_path_from_call(
   call : StarlarkCall,
   errors : Array[String],
@@ -79,6 +104,7 @@ fn starlark_load_path_from_call(
 ///|
 fn starlark_collect_calls_from_fs(
   path : String,
+  workspace_root : String,
   adapter : WorkflowAdapter,
   calls : Array[StarlarkCall],
   errors : Array[String],
@@ -113,8 +139,15 @@ fn starlark_collect_calls_from_fs(
           match starlark_load_path_from_call(call, errors) {
             Some(raw_path) => {
               let resolved = starlark_resolve_load_path(normalized, raw_path)
+              if not(
+                  starlark_is_within_workspace_root(workspace_root, resolved),
+                ) {
+                errors.push("load path escapes workspace root: " + resolved)
+                continue
+              }
               starlark_collect_calls_from_fs(
-                resolved, adapter, calls, errors, visiting, loaded, stack,
+                resolved, workspace_root, adapter, calls, errors, visiting, loaded,
+                stack,
               )
             }
             None => ()
@@ -147,6 +180,7 @@ fn parse_starlark_subset_from_fs_with_inputs_impl(
   external_inputs : Map[String, String],
 ) -> StarlarkParseResult {
   let normalized = starlark_path_normalize(path)
+  let workspace_root = starlark_workspace_root_from_path(normalized)
   if (adapter.fs.exists)(normalized) == false {
     return {
       ir: new_ir("default", [], []),
@@ -160,7 +194,7 @@ fn parse_starlark_subset_from_fs_with_inputs_impl(
   let loaded : Map[String, Bool] = {}
   let stack : Array[String] = []
   starlark_collect_calls_from_fs(
-    normalized, adapter, calls, load_errors, visiting, loaded, stack,
+    normalized, workspace_root, adapter, calls, load_errors, visiting, loaded, stack,
   )
   parse_starlark_calls_impl(calls, load_errors, external_inputs)
 }
