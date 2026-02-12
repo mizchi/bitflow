@@ -286,6 +286,53 @@ test "workflow engine: direct API executes topological tasks" {
 }
 
 ///|
+test "workflow engine: task fingerprint includes execution metadata" {
+  let node = new_node("root", [])
+  let signatures : Map[String, String] = { "root": "sig-root" }
+  let task_a = new_task(
+    "root:build",
+    "root",
+    "build",
+    ["dep:b", "dep:a"],
+    required=false,
+    srcs=["src/b/**", "src/a/**"],
+    outs=["dist/b/**", "dist/a/**"],
+    env={ "B": "2", "A": "1" },
+    cwd="packages/root",
+    trigger_mode="auto",
+  )
+  let task_b = new_task(
+    "root:build",
+    "root",
+    "build",
+    ["dep:a", "dep:b"],
+    required=false,
+    srcs=["src/a/**", "src/b/**"],
+    outs=["dist/a/**", "dist/b/**"],
+    env={ "A": "1", "B": "2" },
+    cwd="packages/root",
+    trigger_mode="auto",
+  )
+  let fp_a = flow_task_fingerprint(task_a, node, signatures)
+  let fp_b = flow_task_fingerprint(task_b, node, signatures)
+  assert_eq(fp_a, fp_b)
+  let task_changed = new_task(
+    "root:build",
+    "root",
+    "build",
+    ["dep:a", "dep:b"],
+    required=false,
+    srcs=["src/a/**", "src/b/**"],
+    outs=["dist/a/**", "dist/b/**", "dist/c/**"],
+    env={ "A": "1", "B": "2" },
+    cwd="packages/root",
+    trigger_mode="auto",
+  )
+  let fp_changed = flow_task_fingerprint(task_changed, node, signatures)
+  assert_true(fp_changed != fp_a)
+}
+
+///|
 test "workflow engine: required failure blocks dependent task" {
   let runner = mock_task_runner([
     task_scenario_failure("dep:test", message="dep failed"),

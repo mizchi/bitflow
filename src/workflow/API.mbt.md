@@ -41,6 +41,33 @@ test {
 }
 ```
 
+## flow_task_fingerprint
+
+Builds a deterministic fingerprint for a concrete `FlowTask` including
+`needs/srcs/outs/env/cwd/trigger_mode`, suitable for local task cache keys.
+
+```mbt check
+///|
+test {
+  let node = new_node("pkg", [])
+  let task = new_task(
+    "pkg:build",
+    "pkg",
+    "pnpm build",
+    ["dep:a"],
+    srcs=["packages/pkg/**"],
+    outs=["packages/pkg/dist/**"],
+    env={ "NODE_ENV": "test" },
+    cwd="packages/pkg",
+    trigger_mode="auto",
+  )
+  let signatures : Map[String, String] = { "pkg": "pkg-1", "dep:a": "dep-1" }
+  let fp = flow_task_fingerprint(task, node, signatures)
+  inspect(fp.contains("task=pkg:build"), content="true")
+  inspect(fp.contains("out:packages/pkg/dist/**"), content="true")
+}
+```
+
 ## execute_ir
 
 Construct IR directly from MoonBit API and execute with a callback runner.

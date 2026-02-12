@@ -8,7 +8,7 @@ from `mizchi/bit`:
 - DAG validation
 - topological ordering
 - affected-node expansion
-- flow cache key / fingerprint generation
+- flow cache key / fingerprint generation (`flow_fingerprint`, `flow_task_fingerprint`)
 - direct IR execution API
 - Starlark subset parser (`workflow/node/task/entrypoint/load`)
 - environment-agnostic adapters (`WorkflowAdapter`, `FsAdapter`, `CommandAdapter`)

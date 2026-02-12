@@ -208,6 +208,85 @@ pub fn new_ir(
 }
 
 ///|
+fn sorted_strings(values : Array[String]) -> Array[String] {
+  let remaining : Array[String] = []
+  for value in values {
+    remaining.push(value)
+  }
+  let sorted : Array[String] = []
+  while remaining.length() > 0 {
+    let mut min_idx = 0
+    let mut idx = 1
+    while idx < remaining.length() {
+      if String::compare(remaining[idx], remaining[min_idx]) < 0 {
+        min_idx = idx
+      }
+      idx += 1
+    }
+    sorted.push(remaining[min_idx])
+    let next_remaining : Array[String] = []
+    let mut keep_idx = 0
+    while keep_idx < remaining.length() {
+      if keep_idx != min_idx {
+        next_remaining.push(remaining[keep_idx])
+      }
+      keep_idx += 1
+    }
+    remaining.clear()
+    for value in next_remaining {
+      remaining.push(value)
+    }
+  }
+  sorted
+}
+
+///|
+fn sorted_env_keys(env : Map[String, String]) -> Array[String] {
+  let keys : Array[String] = []
+  for key, _ in env {
+    keys.push(key)
+  }
+  sorted_strings(keys)
+}
+
+///|
+pub fn flow_task_fingerprint(
+  task : FlowTask,
+  node : FlowNode,
+  signatures : Map[String, String],
+) -> String {
+  let buf = StringBuilder::new()
+  buf.write_string(flow_fingerprint(task.id, task.cmd, node, signatures))
+  buf.write_string("\nrequired=")
+  buf.write_string(if task.required { "true" } else { "false" })
+  buf.write_string("\nnode_ref=")
+  buf.write_string(task.node)
+  buf.write_string("\ncwd=")
+  buf.write_string(task.cwd)
+  buf.write_string("\ntrigger=")
+  buf.write_string(task.trigger_mode)
+  for dep in sorted_strings(task.needs) {
+    buf.write_string("\nneed:")
+    buf.write_string(dep)
+  }
+  for src in sorted_strings(task.srcs) {
+    buf.write_string("\nsrc:")
+    buf.write_string(src)
+  }
+  for out in sorted_strings(task.outs) {
+    buf.write_string("\nout:")
+    buf.write_string(out)
+  }
+  for key in sorted_env_keys(task.env) {
+    buf.write_string("\nenv:")
+    buf.write_string(key)
+    buf.write_string("=")
+    buf.write_string(task.env.get(key).unwrap_or(""))
+  }
+  buf.to_string()
+}
+
+///|
 fn task_node_map(tasks : Array[FlowTask]) -> Map[String, FlowTask] {
   let result : Map[String, FlowTask] = {}
   for task in tasks {

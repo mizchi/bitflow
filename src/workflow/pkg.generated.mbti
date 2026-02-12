@@ -32,6 +32,8 @@ pub fn flow_cache_key(String, String) -> String
 
 pub fn flow_fingerprint(String, String, FlowNode, Map[String, String]) -> String
 
+pub fn flow_task_fingerprint(FlowTask, FlowNode, Map[String, String]) -> String
+
 pub fn graph_issues(Array[FlowNode]) -> Array[String]
 
 pub fn has_dependency_cycle(Array[FlowNode]) -> Bool
