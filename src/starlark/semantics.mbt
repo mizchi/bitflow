@@ -1,5 +1,41 @@
 ///|
-fn starlark_semantic_error(
+pub struct StarlarkNodeDecl {
+  id : String
+  depends_on : Array[String]
+  required : Bool
+}
+
+///|
+pub struct StarlarkTaskDecl {
+  id : String
+  node : String
+  cmd : String
+  needs : Array[String]
+  required : Bool
+  srcs : Array[String]
+  outs : Array[String]
+  env : Map[String, String]
+  cwd : String
+  trigger_mode : String
+}
+
+///|
+pub struct StarlarkWorkflowDecl {
+  name : String
+  max_parallel : Int
+  nodes : Array[StarlarkNodeDecl]
+  tasks : Array[StarlarkTaskDecl]
+  entry_targets : Array[String]
+}
+
+///|
+pub struct StarlarkParseResult {
+  workflow : StarlarkWorkflowDecl
+  errors : Array[String]
+}
+
+///|
+fn semantic_error(
   errors : Array[String],
   line : Int,
   column : Int,
@@ -9,14 +45,14 @@ fn starlark_semantic_error(
 }
 
 ///|
-fn starlark_arg_map(
+fn arg_map(
   call : StarlarkCall,
   errors : Array[String],
 ) -> Map[String, StarlarkArg] {
   let mapped : Map[String, StarlarkArg] = {}
   for arg in call.args {
     if mapped.get(arg.name) is Some(_) {
-      starlark_semantic_error(
+      semantic_error(
         errors,
         arg.line,
         arg.column,
@@ -30,7 +66,7 @@ fn starlark_arg_map(
 }
 
 ///|
-fn starlark_resolve_value(
+fn resolve_value(
   value : StarlarkValue,
   bindings : Map[String, StarlarkValue],
   line : Int,
@@ -40,22 +76,16 @@ fn starlark_resolve_value(
   match value {
     Ref(name) =>
       match bindings.get(name) {
-        Some(bound) =>
-          starlark_resolve_value(bound, bindings, line, column, errors)
+        Some(bound) => resolve_value(bound, bindings, line, column, errors)
         None => {
-          starlark_semantic_error(
-            errors,
-            line,
-            column,
-            "unknown variable '\{name}'",
-          )
+          semantic_error(errors, line, column, "unknown variable '\{name}'")
           None
         }
       }
     List(values) => {
       let resolved : Array[StarlarkValue] = []
       for item in values {
-        match starlark_resolve_value(item, bindings, line, column, errors) {
+        match resolve_value(item, bindings, line, column, errors) {
           Some(value) => resolved.push(value)
           None => return None
         }
@@ -65,7 +95,7 @@ fn starlark_resolve_value(
     Dict(values) => {
       let resolved : Map[String, StarlarkValue] = {}
       for key, item in values {
-        match starlark_resolve_value(item, bindings, line, column, errors) {
+        match resolve_value(item, bindings, line, column, errors) {
           Some(value) => resolved[key] = value
           None => return None
         }
@@ -77,7 +107,7 @@ fn starlark_resolve_value(
 }
 
 ///|
-fn starlark_arg_map_resolved(
+fn arg_map_resolved(
   call : StarlarkCall,
   bindings : Map[String, StarlarkValue],
   errors : Array[String],
@@ -85,7 +115,7 @@ fn starlark_arg_map_resolved(
   let mapped : Map[String, StarlarkArg] = {}
   for arg in call.args {
     if mapped.get(arg.name) is Some(_) {
-      starlark_semantic_error(
+      semantic_error(
         errors,
         arg.line,
         arg.column,
@@ -93,8 +123,7 @@ fn starlark_arg_map_resolved(
       )
       continue
     }
-    match
-      starlark_resolve_value(arg.value, bindings, arg.line, arg.column, errors) {
+    match resolve_value(arg.value, bindings, arg.line, arg.column, errors) {
       Some(value) =>
         mapped[arg.name] = {
           name: arg.name,
@@ -109,7 +138,7 @@ fn starlark_arg_map_resolved(
 }
 
 ///|
-fn starlark_call_has_arg(call : StarlarkCall, key : String) -> Bool {
+fn call_has_arg(call : StarlarkCall, key : String) -> Bool {
   for arg in call.args {
     if arg.name == key {
       return true
@@ -119,14 +148,14 @@ fn starlark_call_has_arg(call : StarlarkCall, key : String) -> Bool {
 }
 
 ///|
-fn starlark_validate_unknown_args(
+fn validate_unknown_args(
   call : StarlarkCall,
   allowed : Array[String],
   errors : Array[String],
 ) -> Unit {
   for arg in call.args {
     if not(allowed.contains(arg.name)) {
-      starlark_semantic_error(
+      semantic_error(
         errors,
         arg.line,
         arg.column,
@@ -137,23 +166,23 @@ fn starlark_validate_unknown_args(
 }
 
 ///|
-fn starlark_validate_call_shape(
+fn validate_call_shape(
   call : StarlarkCall,
   args : Map[String, StarlarkArg],
   errors : Array[String],
 ) -> Unit {
-  let allowed = starlark_builtin_allowed_args(call.name)
+  let allowed = builtin_allowed_args(call.name)
   if allowed.length() > 0 {
-    starlark_validate_unknown_args(call, allowed, errors)
+    validate_unknown_args(call, allowed, errors)
   }
-  for key in starlark_builtin_required_args(call.name) {
+  for key in builtin_required_args(call.name) {
     if args.get(key) is None {
-      if starlark_call_has_arg(call, key) {
+      if call_has_arg(call, key) {
         // The argument was provided syntactically but failed to resolve.
         // Keep the root resolution error and skip noisy "required" reports.
         continue
       }
-      starlark_semantic_error(
+      semantic_error(
         errors,
         call.line,
         call.column,
@@ -164,7 +193,7 @@ fn starlark_validate_call_shape(
 }
 
 ///|
-fn starlark_required_arg(
+fn required_arg(
   call : StarlarkCall,
   args : Map[String, StarlarkArg],
   key : String,
@@ -173,7 +202,7 @@ fn starlark_required_arg(
   match args.get(key) {
     Some(arg) => Some(arg)
     None => {
-      starlark_semantic_error(
+      semantic_error(
         errors,
         call.line,
         call.column,
@@ -185,7 +214,7 @@ fn starlark_required_arg(
 }
 
 ///|
-fn starlark_expect_string(
+fn expect_string(
   owner : String,
   key : String,
   arg : StarlarkArg,
@@ -194,7 +223,7 @@ fn starlark_expect_string(
   match arg.value {
     Str(value) => Some(value)
     _ => {
-      starlark_semantic_error(
+      semantic_error(
         errors,
         arg.line,
         arg.column,
@@ -206,7 +235,7 @@ fn starlark_expect_string(
 }
 
 ///|
-fn starlark_expect_int(
+fn expect_int(
   owner : String,
   key : String,
   arg : StarlarkArg,
@@ -215,7 +244,7 @@ fn starlark_expect_int(
   match arg.value {
     Num(value) => Some(value)
     _ => {
-      starlark_semantic_error(
+      semantic_error(
         errors,
         arg.line,
         arg.column,
@@ -227,7 +256,7 @@ fn starlark_expect_int(
 }
 
 ///|
-fn starlark_expect_bool(
+fn expect_bool(
   owner : String,
   key : String,
   arg : StarlarkArg,
@@ -236,7 +265,7 @@ fn starlark_expect_bool(
   match arg.value {
     Bool(value) => Some(value)
     _ => {
-      starlark_semantic_error(
+      semantic_error(
         errors,
         arg.line,
         arg.column,
@@ -248,16 +277,13 @@ fn starlark_expect_bool(
 }
 
 ///|
-fn starlark_expect_trigger_mode(
-  arg : StarlarkArg,
-  errors : Array[String],
-) -> String? {
-  match starlark_expect_string("task", "trigger", arg, errors) {
+fn expect_trigger_mode(arg : StarlarkArg, errors : Array[String]) -> String? {
+  match expect_string("task", "trigger", arg, errors) {
     Some(mode) =>
       if mode == "auto" || mode == "manual" {
         Some(mode)
       } else {
-        starlark_semantic_error(
+        semantic_error(
           errors,
           arg.line,
           arg.column,
@@ -270,7 +296,7 @@ fn starlark_expect_trigger_mode(
 }
 
 ///|
-fn starlark_expect_string_list(
+fn expect_string_list(
   owner : String,
   key : String,
   arg : StarlarkArg,
@@ -283,7 +309,7 @@ fn starlark_expect_string_list(
         match value {
           Str(text) => result.push(text)
           _ => {
-            starlark_semantic_error(
+            semantic_error(
               errors,
               arg.line,
               arg.column,
@@ -296,7 +322,7 @@ fn starlark_expect_string_list(
       Some(result)
     }
     _ => {
-      starlark_semantic_error(
+      semantic_error(
         errors,
         arg.line,
         arg.column,
@@ -308,7 +334,7 @@ fn starlark_expect_string_list(
 }
 
 ///|
-fn starlark_expect_string_dict(
+fn expect_string_dict(
   owner : String,
   key : String,
   arg : StarlarkArg,
@@ -321,7 +347,7 @@ fn starlark_expect_string_dict(
         match value {
           Str(text) => result[dict_key] = text
           _ => {
-            starlark_semantic_error(
+            semantic_error(
               errors,
               arg.line,
               arg.column,
@@ -334,7 +360,7 @@ fn starlark_expect_string_dict(
       Some(result)
     }
     _ => {
-      starlark_semantic_error(
+      semantic_error(
         errors,
         arg.line,
         arg.column,
@@ -346,10 +372,7 @@ fn starlark_expect_string_dict(
 }
 
 ///|
-fn starlark_expect_task_cmd(
-  arg : StarlarkArg,
-  errors : Array[String],
-) -> String? {
+fn expect_task_cmd(arg : StarlarkArg, errors : Array[String]) -> String? {
   match arg.value {
     Str(cmd) => Some(cmd)
     List(values) => {
@@ -358,7 +381,7 @@ fn starlark_expect_task_cmd(
         match value {
           Str(text) => parts.push(text)
           _ => {
-            starlark_semantic_error(
+            semantic_error(
               errors,
               arg.line,
               arg.column,
@@ -369,7 +392,7 @@ fn starlark_expect_task_cmd(
         }
       }
       if parts.length() == 0 {
-        starlark_semantic_error(
+        semantic_error(
           errors,
           arg.line,
           arg.column,
@@ -381,7 +404,7 @@ fn starlark_expect_task_cmd(
       }
     }
     _ => {
-      starlark_semantic_error(
+      semantic_error(
         errors,
         arg.line,
         arg.column,
@@ -393,26 +416,26 @@ fn starlark_expect_task_cmd(
 }
 
 ///|
-fn starlark_apply_assignment(
+fn apply_assignment(
   call : StarlarkCall,
   bindings : Map[String, StarlarkValue],
   errors : Array[String],
 ) -> Unit {
-  let args = starlark_arg_map(call, errors)
-  let name_arg = match starlark_required_arg(call, args, "name", errors) {
+  let args = arg_map(call, errors)
+  let name_arg = match required_arg(call, args, "name", errors) {
     Some(arg) => arg
     None => return
   }
-  let value_arg = match starlark_required_arg(call, args, "value", errors) {
+  let value_arg = match required_arg(call, args, "value", errors) {
     Some(arg) => arg
     None => return
   }
-  let name = match starlark_expect_string("assign", "name", name_arg, errors) {
+  let name = match expect_string("assign", "name", name_arg, errors) {
     Some(value) => value
     None => return
   }
   match
-    starlark_resolve_value(
+    resolve_value(
       value_arg.value,
       bindings,
       value_arg.line,
@@ -425,12 +448,12 @@ fn starlark_apply_assignment(
 }
 
 ///|
-fn starlark_var_allowed_types() -> Array[String] {
+fn var_allowed_types() -> Array[String] {
   ["any", "string", "int", "bool", "string_list", "string_dict"]
 }
 
 ///|
-fn starlark_value_matches_type(value : StarlarkValue, typ : String) -> Bool {
+fn value_matches_type(value : StarlarkValue, typ : String) -> Bool {
   if typ == "any" {
     return true
   }
@@ -467,7 +490,7 @@ fn starlark_value_matches_type(value : StarlarkValue, typ : String) -> Bool {
 }
 
 ///|
-fn starlark_infer_var_type(value : StarlarkValue) -> String {
+fn infer_var_type(value : StarlarkValue) -> String {
   match value {
     Str(_) => "string"
     Num(_) => "int"
@@ -495,7 +518,7 @@ fn starlark_infer_var_type(value : StarlarkValue) -> String {
 }
 
 ///|
-fn starlark_trim_ascii_space(text : String) -> String {
+fn trim_ascii_space(text : String) -> String {
   let mut start = 0
   let mut end = text.length()
   while start < end {
@@ -522,8 +545,8 @@ fn starlark_trim_ascii_space(text : String) -> String {
 }
 
 ///|
-fn starlark_parse_external_int(raw : String) -> Int? {
-  let text = starlark_trim_ascii_space(raw)
+fn parse_external_int(raw : String) -> Int? {
+  let text = trim_ascii_space(raw)
   if text.length() == 0 {
     return None
   }
@@ -555,38 +578,36 @@ fn starlark_parse_external_int(raw : String) -> Int? {
 }
 
 ///|
-fn starlark_parse_external_string_list(raw : String) -> StarlarkValue {
-  let text = starlark_trim_ascii_space(raw)
+fn parse_external_string_list(raw : String) -> StarlarkValue {
+  let text = trim_ascii_space(raw)
   if text.length() == 0 {
     return List([])
   }
   let items : Array[StarlarkValue] = []
   for view in text.split(",") {
-    let item = starlark_trim_ascii_space(view.to_string())
+    let item = trim_ascii_space(view.to_string())
     items.push(Str(item))
   }
   List(items)
 }
 
 ///|
-fn starlark_parse_external_string_dict(
-  raw : String,
-) -> Map[String, StarlarkValue]? {
-  let text = starlark_trim_ascii_space(raw)
+fn parse_external_string_dict(raw : String) -> Map[String, StarlarkValue]? {
+  let text = trim_ascii_space(raw)
   if text.length() == 0 {
     return Some({})
   }
   let values : Map[String, StarlarkValue] = {}
   for part_view in text.split(",") {
-    let part = starlark_trim_ascii_space(part_view.to_string())
+    let part = trim_ascii_space(part_view.to_string())
     if part.length() == 0 {
       return None
     }
     guard part.find("=") is Some(eq_idx) else { return None }
-    let key = starlark_trim_ascii_space(
+    let key = trim_ascii_space(
       String::unsafe_substring(part, start=0, end=eq_idx),
     )
-    let value = starlark_trim_ascii_space(
+    let value = trim_ascii_space(
       String::unsafe_substring(part, start=eq_idx + 1, end=part.length()),
     )
     if key.length() == 0 {
@@ -598,7 +619,7 @@ fn starlark_parse_external_string_dict(
 }
 
 ///|
-fn starlark_parse_external_input_value(
+fn parse_external_input_value(
   name : String,
   typ : String,
   raw : String,
@@ -610,10 +631,10 @@ fn starlark_parse_external_input_value(
     return Some(Str(raw))
   }
   if typ == "int" {
-    match starlark_parse_external_int(raw) {
+    match parse_external_int(raw) {
       Some(value) => return Some(Num(value))
       None => {
-        starlark_semantic_error(
+        semantic_error(
           errors,
           line,
           column,
@@ -624,14 +645,14 @@ fn starlark_parse_external_input_value(
     }
   }
   if typ == "bool" {
-    let text = starlark_trim_ascii_space(raw)
+    let text = trim_ascii_space(raw)
     if text == "true" || text == "True" || text == "1" {
       return Some(Bool(true))
     }
     if text == "false" || text == "False" || text == "0" {
       return Some(Bool(false))
     }
-    starlark_semantic_error(
+    semantic_error(
       errors,
       line,
       column,
@@ -640,13 +661,13 @@ fn starlark_parse_external_input_value(
     return None
   }
   if typ == "string_list" {
-    return Some(starlark_parse_external_string_list(raw))
+    return Some(parse_external_string_list(raw))
   }
   if typ == "string_dict" {
-    match starlark_parse_external_string_dict(raw) {
+    match parse_external_string_dict(raw) {
       Some(values) => return Some(Dict(values))
       None => {
-        starlark_semantic_error(
+        semantic_error(
           errors,
           line,
           column,
@@ -656,12 +677,12 @@ fn starlark_parse_external_input_value(
       }
     }
   }
-  starlark_semantic_error(errors, line, column, "unsupported var type '\{typ}'")
+  semantic_error(errors, line, column, "unsupported var type '\{typ}'")
   None
 }
 
 ///|
-fn starlark_apply_var_call(
+fn apply_var_call(
   call : StarlarkCall,
   args : Map[String, StarlarkArg],
   bindings : Map[String, StarlarkValue],
@@ -672,7 +693,7 @@ fn starlark_apply_var_call(
   errors : Array[String],
 ) -> Unit {
   for key in ["name", "type", "required", "default"] {
-    if starlark_call_has_arg(call, key) && args.get(key) is None {
+    if call_has_arg(call, key) && args.get(key) is None {
       return
     }
   }
@@ -680,14 +701,14 @@ fn starlark_apply_var_call(
     Some(arg) => arg
     None => return
   }
-  let name = match starlark_expect_string("var", "name", name_arg, errors) {
+  let name = match expect_string("var", "name", name_arg, errors) {
     Some(value) => value
     None => return
   }
   let mut required = false
   match args.get("required") {
     Some(required_arg) =>
-      match starlark_expect_bool("var", "required", required_arg, errors) {
+      match expect_bool("var", "required", required_arg, errors) {
         Some(value) => required = value
         None => return
       }
@@ -700,20 +721,19 @@ fn starlark_apply_var_call(
     None => None
   }
   let mut typ = match default_value {
-    Some(value) => starlark_infer_var_type(value)
+    Some(value) => infer_var_type(value)
     None => "string"
   }
   match args.get("type") {
     Some(type_arg) =>
-      match starlark_expect_string("var", "type", type_arg, errors) {
+      match expect_string("var", "type", type_arg, errors) {
         Some(type_name) => {
-          if not(starlark_var_allowed_types().contains(type_name)) {
-            starlark_semantic_error(
+          if not(var_allowed_types().contains(type_name)) {
+            semantic_error(
               errors,
               type_arg.line,
               type_arg.column,
-              "var.type must be one of " +
-              starlark_var_allowed_types().join(", "),
+              "var.type must be one of " + var_allowed_types().join(", "),
             )
             return
           }
@@ -725,8 +745,8 @@ fn starlark_apply_var_call(
   }
   match default_arg {
     Some(arg) =>
-      if not(starlark_value_matches_type(arg.value, typ)) {
-        starlark_semantic_error(
+      if not(value_matches_type(arg.value, typ)) {
+        semantic_error(
           errors,
           arg.line,
           arg.column,
@@ -737,7 +757,7 @@ fn starlark_apply_var_call(
     None => ()
   }
   if default_arg is None && not(required) {
-    starlark_semantic_error(
+    semantic_error(
       errors,
       call.line,
       call.column,
@@ -750,7 +770,7 @@ fn starlark_apply_var_call(
   match external_inputs.get(name) {
     Some(raw_value) =>
       match
-        starlark_parse_external_input_value(
+        parse_external_input_value(
           name,
           typ,
           raw_value,
@@ -782,7 +802,7 @@ fn starlark_apply_var_call(
 }
 
 ///|
-fn starlark_apply_config_call(
+fn apply_config_call(
   call : StarlarkCall,
   args : Map[String, StarlarkArg],
   bindings : Map[String, StarlarkValue],
@@ -798,12 +818,12 @@ fn starlark_apply_config_call(
     Some(arg) => arg
     None => return
   }
-  let name = match starlark_expect_string("config", "name", name_arg, errors) {
+  let name = match expect_string("config", "name", name_arg, errors) {
     Some(value) => value
     None => return
   }
   guard var_types.get(name) is Some(expected_type) else {
-    starlark_semantic_error(
+    semantic_error(
       errors,
       call.line,
       call.column,
@@ -811,8 +831,8 @@ fn starlark_apply_config_call(
     )
     return
   }
-  if not(starlark_value_matches_type(value_arg.value, expected_type)) {
-    starlark_semantic_error(
+  if not(value_matches_type(value_arg.value, expected_type)) {
+    semantic_error(
       errors,
       value_arg.line,
       value_arg.column,
@@ -827,21 +847,29 @@ fn starlark_apply_config_call(
 }
 
 ///|
-fn parse_starlark_subset_impl(text : String) -> StarlarkParseResult {
-  parse_starlark_subset_with_inputs_impl(text, {})
+pub fn parse(text : String) -> StarlarkParseResult {
+  parse_with_inputs_impl(text, {})
 }
 
 ///|
-fn parse_starlark_subset_with_inputs_impl(
+pub fn parse_with_inputs(
   text : String,
   external_inputs : Map[String, String],
 ) -> StarlarkParseResult {
-  let syntax = parse_starlark_syntax(text)
-  parse_starlark_calls_impl(syntax.calls, syntax.errors, external_inputs)
+  parse_with_inputs_impl(text, external_inputs)
 }
 
 ///|
-fn parse_starlark_calls_impl(
+fn parse_with_inputs_impl(
+  text : String,
+  external_inputs : Map[String, String],
+) -> StarlarkParseResult {
+  let syntax = parse_syntax(text)
+  parse_calls_impl(syntax.calls, syntax.errors, external_inputs)
+}
+
+///|
+fn parse_calls_impl(
   calls : Array[StarlarkCall],
   syntax_errors : Array[String],
   external_inputs : Map[String, String],
@@ -851,8 +879,8 @@ fn parse_starlark_calls_impl(
     errors.push(err)
   }
 
-  let nodes : Array[FlowNode] = []
-  let tasks : Array[FlowTask] = []
+  let nodes : Array[StarlarkNodeDecl] = []
+  let tasks : Array[StarlarkTaskDecl] = []
   let entry_targets : Array[String] = []
   let mut workflow_name = "default"
   let mut max_parallel = 1
@@ -863,27 +891,27 @@ fn parse_starlark_calls_impl(
   let required_locations : Map[String, (Int, Int)] = {}
 
   for call in calls {
-    let canonical_name = starlark_builtin_canonical_name(call.name)
+    let canonical_name = builtin_canonical_name(call.name)
     match canonical_name {
-      "__assign__" => starlark_apply_assignment(call, bindings, errors)
+      "__assign__" => apply_assignment(call, bindings, errors)
       "var" => {
-        let args = starlark_arg_map_resolved(call, bindings, errors)
-        starlark_validate_call_shape(call, args, errors)
-        starlark_apply_var_call(
+        let args = arg_map_resolved(call, bindings, errors)
+        validate_call_shape(call, args, errors)
+        apply_var_call(
           call, args, bindings, var_types, required_pending, required_locations,
           external_inputs, errors,
         )
       }
       "config" => {
-        let args = starlark_arg_map_resolved(call, bindings, errors)
-        starlark_validate_call_shape(call, args, errors)
-        starlark_apply_config_call(
+        let args = arg_map_resolved(call, bindings, errors)
+        validate_call_shape(call, args, errors)
+        apply_config_call(
           call, args, bindings, var_types, required_pending, errors,
         )
       }
       "workflow" => {
         if seen_workflow {
-          starlark_semantic_error(
+          semantic_error(
             errors,
             call.line,
             call.column,
@@ -892,12 +920,12 @@ fn parse_starlark_calls_impl(
           continue
         }
         seen_workflow = true
-        let args = starlark_arg_map_resolved(call, bindings, errors)
-        starlark_validate_call_shape(call, args, errors)
+        let args = arg_map_resolved(call, bindings, errors)
+        validate_call_shape(call, args, errors)
 
         match args.get("name") {
           Some(arg) =>
-            match starlark_expect_string("workflow", "name", arg, errors) {
+            match expect_string("workflow", "name", arg, errors) {
               Some(name) => workflow_name = name
               None => ()
             }
@@ -906,12 +934,12 @@ fn parse_starlark_calls_impl(
 
         match args.get("max_parallel") {
           Some(arg) =>
-            match starlark_expect_int("workflow", "max_parallel", arg, errors) {
+            match expect_int("workflow", "max_parallel", arg, errors) {
               Some(value) =>
                 if value > 0 {
                   max_parallel = value
                 } else {
-                  starlark_semantic_error(
+                  semantic_error(
                     errors,
                     arg.line,
                     arg.column,
@@ -924,8 +952,8 @@ fn parse_starlark_calls_impl(
         }
       }
       "node" => {
-        let args = starlark_arg_map_resolved(call, bindings, errors)
-        starlark_validate_call_shape(call, args, errors)
+        let args = arg_map_resolved(call, bindings, errors)
+        validate_call_shape(call, args, errors)
         let mut invalid = false
         let mut id = ""
         let mut depends_on : Array[String] = []
@@ -933,7 +961,7 @@ fn parse_starlark_calls_impl(
 
         match args.get("id") {
           Some(arg) =>
-            if starlark_expect_string("node", "id", arg, errors) is Some(value) {
+            if expect_string("node", "id", arg, errors) is Some(value) {
               id = value
             } else {
               invalid = true
@@ -943,7 +971,7 @@ fn parse_starlark_calls_impl(
 
         match args.get("depends_on") {
           Some(arg) =>
-            if starlark_expect_string_list("node", "depends_on", arg, errors)
+            if expect_string_list("node", "depends_on", arg, errors)
               is Some(value) {
               depends_on = value
             } else {
@@ -954,8 +982,7 @@ fn parse_starlark_calls_impl(
 
         match args.get("required") {
           Some(arg) =>
-            if starlark_expect_bool("node", "required", arg, errors)
-              is Some(value) {
+            if expect_bool("node", "required", arg, errors) is Some(value) {
               required = value
             } else {
               invalid = true
@@ -964,12 +991,12 @@ fn parse_starlark_calls_impl(
         }
 
         if not(invalid) {
-          nodes.push(new_node(id, depends_on, required~))
+          nodes.push({ id, depends_on, required })
         }
       }
       "task" => {
-        let args = starlark_arg_map_resolved(call, bindings, errors)
-        starlark_validate_call_shape(call, args, errors)
+        let args = arg_map_resolved(call, bindings, errors)
+        validate_call_shape(call, args, errors)
         let mut invalid = false
         let mut id = ""
         let mut node_id = ""
@@ -984,7 +1011,7 @@ fn parse_starlark_calls_impl(
 
         match args.get("id") {
           Some(arg) =>
-            if starlark_expect_string("task", "id", arg, errors) is Some(value) {
+            if expect_string("task", "id", arg, errors) is Some(value) {
               id = value
             } else {
               invalid = true
@@ -994,8 +1021,7 @@ fn parse_starlark_calls_impl(
 
         match args.get("node") {
           Some(arg) =>
-            if starlark_expect_string("task", "node", arg, errors)
-              is Some(value) {
+            if expect_string("task", "node", arg, errors) is Some(value) {
               node_id = value
             } else {
               invalid = true
@@ -1005,7 +1031,7 @@ fn parse_starlark_calls_impl(
 
         match args.get("cmd") {
           Some(arg) =>
-            if starlark_expect_task_cmd(arg, errors) is Some(value) {
+            if expect_task_cmd(arg, errors) is Some(value) {
               cmd = value
             } else {
               invalid = true
@@ -1015,8 +1041,7 @@ fn parse_starlark_calls_impl(
 
         match args.get("needs") {
           Some(arg) =>
-            if starlark_expect_string_list("task", "needs", arg, errors)
-              is Some(value) {
+            if expect_string_list("task", "needs", arg, errors) is Some(value) {
               needs = value
             } else {
               invalid = true
@@ -1026,8 +1051,7 @@ fn parse_starlark_calls_impl(
 
         match args.get("required") {
           Some(arg) =>
-            if starlark_expect_bool("task", "required", arg, errors)
-              is Some(value) {
+            if expect_bool("task", "required", arg, errors) is Some(value) {
               required = value
             } else {
               invalid = true
@@ -1037,8 +1061,7 @@ fn parse_starlark_calls_impl(
 
         match args.get("srcs") {
           Some(arg) =>
-            if starlark_expect_string_list("task", "srcs", arg, errors)
-              is Some(value) {
+            if expect_string_list("task", "srcs", arg, errors) is Some(value) {
               srcs = value
             } else {
               invalid = true
@@ -1048,8 +1071,7 @@ fn parse_starlark_calls_impl(
 
         match args.get("outs") {
           Some(arg) =>
-            if starlark_expect_string_list("task", "outs", arg, errors)
-              is Some(value) {
+            if expect_string_list("task", "outs", arg, errors) is Some(value) {
               outs = value
             } else {
               invalid = true
@@ -1059,8 +1081,7 @@ fn parse_starlark_calls_impl(
 
         match args.get("env") {
           Some(arg) =>
-            if starlark_expect_string_dict("task", "env", arg, errors)
-              is Some(value) {
+            if expect_string_dict("task", "env", arg, errors) is Some(value) {
               env = value
             } else {
               invalid = true
@@ -1070,7 +1091,7 @@ fn parse_starlark_calls_impl(
 
         match args.get("cwd") {
           Some(arg) =>
-            if starlark_expect_string("task", "cwd", arg, errors) is Some(value) {
+            if expect_string("task", "cwd", arg, errors) is Some(value) {
               cwd = value
             } else {
               invalid = true
@@ -1080,7 +1101,7 @@ fn parse_starlark_calls_impl(
 
         match args.get("trigger") {
           Some(arg) =>
-            if starlark_expect_trigger_mode(arg, errors) is Some(value) {
+            if expect_trigger_mode(arg, errors) is Some(value) {
               trigger_mode = value
             } else {
               invalid = true
@@ -1089,28 +1110,26 @@ fn parse_starlark_calls_impl(
         }
 
         if not(invalid) {
-          tasks.push(
-            new_task(
-              id,
-              node_id,
-              cmd,
-              needs,
-              required~,
-              srcs~,
-              outs~,
-              env~,
-              cwd~,
-              trigger_mode~,
-            ),
-          )
+          tasks.push({
+            id,
+            node: node_id,
+            cmd,
+            needs,
+            required,
+            srcs,
+            outs,
+            env,
+            cwd,
+            trigger_mode,
+          })
         }
       }
       "entrypoint" => {
-        let args = starlark_arg_map_resolved(call, bindings, errors)
-        starlark_validate_call_shape(call, args, errors)
+        let args = arg_map_resolved(call, bindings, errors)
+        validate_call_shape(call, args, errors)
         match args.get("targets") {
           Some(arg) =>
-            if starlark_expect_string_list("entrypoint", "targets", arg, errors)
+            if expect_string_list("entrypoint", "targets", arg, errors)
               is Some(targets) {
               for target in targets {
                 entry_targets.push(target)
@@ -1120,14 +1139,14 @@ fn parse_starlark_calls_impl(
         }
       }
       "load" =>
-        starlark_semantic_error(
+        semantic_error(
           errors,
           call.line,
           call.column,
           "load() is only supported when parsing from fs",
         )
       _ =>
-        starlark_semantic_error(
+        semantic_error(
           errors,
           call.line,
           call.column,
@@ -1139,7 +1158,7 @@ fn parse_starlark_calls_impl(
   for name, is_pending in required_pending {
     if is_pending {
       let (line, column) = required_locations.get(name).unwrap_or((1, 1))
-      starlark_semantic_error(
+      semantic_error(
         errors,
         line,
         column,
@@ -1154,7 +1173,7 @@ fn parse_starlark_calls_impl(
   }
 
   {
-    ir: new_ir(workflow_name, nodes, tasks, entry_targets~, max_parallel~),
+    workflow: { name: workflow_name, max_parallel, nodes, tasks, entry_targets },
     errors,
   }
 }

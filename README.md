@@ -16,6 +16,7 @@ from `mizchi/bit`:
 ## Package
 
 - `mizchi/bitflow/workflow`
+- `mizchi/bitflow/starlark` (Starlark parser and semantic frontend)
 
 ## Quick Commands
 

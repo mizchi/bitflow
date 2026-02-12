@@ -127,9 +127,9 @@ test "workflow adapter: fs-backed starlark run and report write" {
       command_success(stdout="ran:" + cmd)
     }),
   )
-  let parsed = parse_starlark_subset_from_fs("workflow.star", adapter)
+  let parsed = parse_from_fs("workflow.star", adapter)
   assert_eq(parsed.errors.length(), 0)
-  let result = execute_starlark_subset_from_fs("workflow.star", adapter)
+  let result = execute_from_fs("workflow.star", adapter)
   assert_eq(result.ok, true)
   assert_eq(result.state, "completed")
   assert_eq(write_execution_report("report.txt", result, adapter), true)
@@ -156,11 +156,9 @@ test "workflow adapter: fs-backed starlark parse accepts external inputs" {
     FsAdapter::memory_with({ "workflow.star": src }),
     CommandAdapter::none(),
   )
-  let parsed = parse_starlark_subset_from_fs_with_inputs(
-    "workflow.star",
-    adapter,
-    { "profile": "prod" },
-  )
+  let parsed = parse_from_fs_with_inputs("workflow.star", adapter, {
+    "profile": "prod",
+  })
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.name, "prod")
   assert_eq(parsed.ir.tasks.length(), 1)
@@ -185,11 +183,9 @@ test "workflow adapter: fs-backed starlark execute accepts external inputs" {
       command_success(stdout="ran:" + cmd)
     }),
   )
-  let result = execute_starlark_subset_from_fs_with_inputs(
-    "workflow.star",
-    adapter,
-    { "profile": "prod" },
-  )
+  let result = execute_from_fs_with_inputs("workflow.star", adapter, {
+    "profile": "prod",
+  })
   assert_eq(result.ok, true)
   assert_eq(result.state, "completed")
   assert_eq(result.steps.length(), 1)
@@ -208,7 +204,7 @@ test "workflow adapter: fs-backed starlark parse accepts cli and env inputs" {
     FsAdapter::memory_with({ "workflow.star": src }),
     CommandAdapter::none(),
   )
-  let parsed = parse_starlark_subset_from_fs_with_cli_env(
+  let parsed = parse_from_fs_with_cli_env(
     "workflow.star",
     adapter,
     ["--var=profile=prod"],
@@ -222,12 +218,12 @@ test "workflow adapter: fs-backed starlark parse accepts cli and env inputs" {
 ///|
 test "workflow adapter: missing starlark file becomes invalid result" {
   let adapter = WorkflowAdapter::none()
-  let parsed = parse_starlark_subset_from_fs("missing.star", adapter)
+  let parsed = parse_from_fs("missing.star", adapter)
   assert_eq(parsed.errors.length(), 1)
   assert_true(
     parsed.errors[0].contains("failed to read workflow file: missing.star"),
   )
-  let result = execute_starlark_subset_from_fs("missing.star", adapter)
+  let result = execute_from_fs("missing.star", adapter)
   assert_eq(result.ok, false)
   assert_eq(result.state, "invalid")
   assert_eq(result.steps.length(), 0)
@@ -271,11 +267,11 @@ test "workflow adapter: starlark load() merges external files from fs" {
       command_success(stdout="ran:" + cmd)
     }),
   )
-  let parsed = parse_starlark_subset_from_fs("workflow.star", adapter)
+  let parsed = parse_from_fs("workflow.star", adapter)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.nodes.length(), 2)
   assert_eq(parsed.ir.tasks.length(), 2)
-  let result = execute_starlark_subset_from_fs("workflow.star", adapter)
+  let result = execute_from_fs("workflow.star", adapter)
   assert_eq(result.ok, true)
   assert_eq(result.order.length(), 2)
 }
@@ -292,7 +288,7 @@ test "workflow adapter: starlark load() reports cycle" {
     FsAdapter::memory_with({ "workflow.star": root_src, "defs/a.star": a_src }),
     CommandAdapter::none(),
   )
-  let parsed = parse_starlark_subset_from_fs("workflow.star", adapter)
+  let parsed = parse_from_fs("workflow.star", adapter)
   assert_true(parsed.errors.length() > 0)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("load cycle"))
@@ -307,7 +303,7 @@ test "workflow adapter: starlark load() reports missing file" {
     FsAdapter::memory_with({ "workflow.star": root_src }),
     CommandAdapter::none(),
   )
-  let parsed = parse_starlark_subset_from_fs("workflow.star", adapter)
+  let parsed = parse_from_fs("workflow.star", adapter)
   assert_true(parsed.errors.length() > 0)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("failed to read loaded file"))
@@ -328,7 +324,7 @@ test "workflow adapter: starlark load() rejects path outside workspace root" {
     }),
     CommandAdapter::none(),
   )
-  let parsed = parse_starlark_subset_from_fs("workflow.star", adapter)
+  let parsed = parse_from_fs("workflow.star", adapter)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("load path escapes workspace root"))
 }
@@ -347,7 +343,7 @@ test "workflow adapter: starlark load() validates unknown arg via builtin schema
     }),
     CommandAdapter::none(),
   )
-  let parsed = parse_starlark_subset_from_fs("workflow.star", adapter)
+  let parsed = parse_from_fs("workflow.star", adapter)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("unknown argument 'src' for load"))
   assert_true(text.contains("load.path is required"))

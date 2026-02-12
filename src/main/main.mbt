@@ -118,7 +118,7 @@ fn main {
     host_fs_adapter(),
     @wf.CommandAdapter::none(),
   )
-  let parsed = @wf.parse_starlark_subset_from_fs_with_cli_env(
+  let parsed = @wf.parse_from_fs_with_cli_env(
     spec.workflow_path,
     adapter,
     drop_program_name(raw_args),

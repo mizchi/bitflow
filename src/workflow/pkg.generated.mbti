@@ -8,23 +8,23 @@ pub fn command_success(stdout? : String, stderr? : String) -> CommandResult
 
 pub fn entry_targets_for_changed_paths(FlowIr, Array[String]) -> Array[String]
 
+pub fn execute(String, (FlowTask) -> (Bool, String)) -> FlowExecutionResult
+
+pub fn execute_from_fs(String, WorkflowAdapter) -> FlowExecutionResult
+
+pub fn execute_from_fs_with_cli_env(String, WorkflowAdapter, Array[String], Map[String, String], cli_flag? : String, env_prefix? : String) -> FlowExecutionResult
+
+pub fn execute_from_fs_with_inputs(String, WorkflowAdapter, Map[String, String]) -> FlowExecutionResult
+
 pub fn execute_ir(FlowIr, (FlowTask) -> (Bool, String)) -> FlowExecutionResult
 
 pub fn execute_ir_for_changed_paths(FlowIr, Array[String], (FlowTask) -> (Bool, String)) -> FlowExecutionResult
 
 pub fn execute_ir_with_adapter(FlowIr, WorkflowAdapter) -> FlowExecutionResult
 
-pub fn execute_starlark_subset(String, (FlowTask) -> (Bool, String)) -> FlowExecutionResult
+pub fn execute_with_cli_env(String, Array[String], Map[String, String], (FlowTask) -> (Bool, String), cli_flag? : String, env_prefix? : String) -> FlowExecutionResult
 
-pub fn execute_starlark_subset_from_fs(String, WorkflowAdapter) -> FlowExecutionResult
-
-pub fn execute_starlark_subset_from_fs_with_cli_env(String, WorkflowAdapter, Array[String], Map[String, String], cli_flag? : String, env_prefix? : String) -> FlowExecutionResult
-
-pub fn execute_starlark_subset_from_fs_with_inputs(String, WorkflowAdapter, Map[String, String]) -> FlowExecutionResult
-
-pub fn execute_starlark_subset_with_cli_env(String, Array[String], Map[String, String], (FlowTask) -> (Bool, String), cli_flag? : String, env_prefix? : String) -> FlowExecutionResult
-
-pub fn execute_starlark_subset_with_inputs(String, Map[String, String], (FlowTask) -> (Bool, String)) -> FlowExecutionResult
+pub fn execute_with_inputs(String, Map[String, String], (FlowTask) -> (Bool, String)) -> FlowExecutionResult
 
 pub fn expand_affected_nodes(Array[FlowNode], Map[String, Bool]) -> Map[String, Bool]
 
@@ -46,19 +46,19 @@ pub fn new_node(String, Array[String], required? : Bool) -> FlowNode
 
 pub fn new_task(String, String, String, Array[String], required? : Bool, srcs? : Array[String], outs? : Array[String], env? : Map[String, String], cwd? : String, trigger_mode? : String) -> FlowTask
 
+pub fn parse(String) -> StarlarkParseResult
+
 pub fn parse_external_inputs(Array[String], Map[String, String], cli_flag? : String, env_prefix? : String) -> ExternalInputParseResult
 
-pub fn parse_starlark_subset(String) -> StarlarkParseResult
+pub fn parse_from_fs(String, WorkflowAdapter) -> StarlarkParseResult
 
-pub fn parse_starlark_subset_from_fs(String, WorkflowAdapter) -> StarlarkParseResult
+pub fn parse_from_fs_with_cli_env(String, WorkflowAdapter, Array[String], Map[String, String], cli_flag? : String, env_prefix? : String) -> StarlarkParseResult
 
-pub fn parse_starlark_subset_from_fs_with_cli_env(String, WorkflowAdapter, Array[String], Map[String, String], cli_flag? : String, env_prefix? : String) -> StarlarkParseResult
+pub fn parse_from_fs_with_inputs(String, WorkflowAdapter, Map[String, String]) -> StarlarkParseResult
 
-pub fn parse_starlark_subset_from_fs_with_inputs(String, WorkflowAdapter, Map[String, String]) -> StarlarkParseResult
+pub fn parse_with_cli_env(String, Array[String], Map[String, String], cli_flag? : String, env_prefix? : String) -> StarlarkParseResult
 
-pub fn parse_starlark_subset_with_cli_env(String, Array[String], Map[String, String], cli_flag? : String, env_prefix? : String) -> StarlarkParseResult
-
-pub fn parse_starlark_subset_with_inputs(String, Map[String, String]) -> StarlarkParseResult
+pub fn parse_with_inputs(String, Map[String, String]) -> StarlarkParseResult
 
 pub fn plan_task_cache(FlowIr, Map[String, String], Map[String, String]) -> FlowTaskCachePlanResult
 

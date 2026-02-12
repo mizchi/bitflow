@@ -40,7 +40,7 @@ priv struct StarlarkParser {
 }
 
 ///|
-fn starlark_parser_new(text : String) -> StarlarkParser {
+fn parser_new(text : String) -> StarlarkParser {
   { text, idx: 0, line: 1, column: 1, errors: [] }
 }
 
@@ -79,22 +79,22 @@ fn StarlarkParser::consume_char(self : StarlarkParser, ch : UInt16) -> Bool {
 }
 
 ///|
-fn starlark_is_digit(ch : UInt16) -> Bool {
+fn is_digit(ch : UInt16) -> Bool {
   ch >= '0' && ch <= '9'
 }
 
 ///|
-fn starlark_is_ident_start(ch : UInt16) -> Bool {
+fn is_ident_start(ch : UInt16) -> Bool {
   (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch == '_'
 }
 
 ///|
-fn starlark_is_ident_part(ch : UInt16) -> Bool {
-  starlark_is_ident_start(ch) || starlark_is_digit(ch)
+fn is_ident_part(ch : UInt16) -> Bool {
+  is_ident_start(ch) || is_digit(ch)
 }
 
 ///|
-fn starlark_is_inline_space(ch : UInt16) -> Bool {
+fn is_inline_space(ch : UInt16) -> Bool {
   ch == ' ' || ch == '\t' || ch == '\r'
 }
 
@@ -106,7 +106,7 @@ fn StarlarkParser::push_error(self : StarlarkParser, msg : String) -> Unit {
 ///|
 fn StarlarkParser::skip_inline_space(self : StarlarkParser) -> Unit {
   while self.peek() is Some(ch) {
-    if starlark_is_inline_space(ch) {
+    if is_inline_space(ch) {
       self.advance() |> ignore
     } else {
       break
@@ -132,7 +132,7 @@ fn StarlarkParser::skip_statement_separators(self : StarlarkParser) -> Unit {
   while true {
     let mut progressed = false
     while self.peek() is Some(ch) {
-      if starlark_is_inline_space(ch) || ch == '\n' || ch == ';' {
+      if is_inline_space(ch) || ch == '\n' || ch == ';' {
         self.advance() |> ignore
         progressed = true
       } else {
@@ -154,7 +154,7 @@ fn StarlarkParser::skip_value_space(self : StarlarkParser) -> Unit {
   while true {
     let mut progressed = false
     while self.peek() is Some(ch) {
-      if starlark_is_inline_space(ch) || ch == '\n' {
+      if is_inline_space(ch) || ch == '\n' {
         self.advance() |> ignore
         progressed = true
       } else {
@@ -173,13 +173,11 @@ fn StarlarkParser::skip_value_space(self : StarlarkParser) -> Unit {
 
 ///|
 fn StarlarkParser::parse_identifier(self : StarlarkParser) -> String? {
-  guard self.peek() is Some(ch) && starlark_is_ident_start(ch) else {
-    return None
-  }
+  guard self.peek() is Some(ch) && is_ident_start(ch) else { return None }
   let start = self.idx
   self.advance() |> ignore
   while self.peek() is Some(next) {
-    if starlark_is_ident_part(next) {
+    if is_ident_part(next) {
       self.advance() |> ignore
     } else {
       break
@@ -246,13 +244,13 @@ fn StarlarkParser::parse_int(self : StarlarkParser) -> StarlarkValue? {
   if self.consume_char('-') {
     negative = true
   }
-  guard self.peek() is Some(first) && starlark_is_digit(first) else {
+  guard self.peek() is Some(first) && is_digit(first) else {
     self.push_error("expected integer literal")
     return None
   }
   let mut value = 0
   while self.peek() is Some(ch) {
-    if starlark_is_digit(ch) {
+    if is_digit(ch) {
       self.advance() |> ignore
       value = value * 10 + (ch.to_int() - '0'.to_int())
     } else {
@@ -406,7 +404,7 @@ fn StarlarkParser::parse_dict(self : StarlarkParser) -> StarlarkValue? {
 }
 
 ///|
-fn starlark_parse_identifier_value(ident : String) -> StarlarkValue? {
+fn parse_identifier_value(ident : String) -> StarlarkValue? {
   if ident == "True" || ident == "true" {
     Some(Bool(true))
   } else if ident == "False" || ident == "false" {
@@ -432,15 +430,15 @@ fn StarlarkParser::parse_value(self : StarlarkParser) -> StarlarkValue? {
   if ch == '{' {
     return self.parse_dict()
   }
-  if ch == '-' || starlark_is_digit(ch) {
+  if ch == '-' || is_digit(ch) {
     return self.parse_int()
   }
-  if starlark_is_ident_start(ch) {
+  if is_ident_start(ch) {
     guard self.parse_identifier() is Some(ident) else {
       self.push_error("expected value")
       return None
     }
-    return starlark_parse_identifier_value(ident)
+    return parse_identifier_value(ident)
   }
   self.push_error("unexpected token while parsing value")
   None
@@ -640,8 +638,8 @@ fn StarlarkParser::consume_statement_end(self : StarlarkParser) -> Unit {
 }
 
 ///|
-fn parse_starlark_syntax(text : String) -> StarlarkSyntaxResult {
-  let parser = starlark_parser_new(text)
+fn parse_syntax(text : String) -> StarlarkSyntaxResult {
+  let parser = parser_new(text)
   let calls : Array[StarlarkCall] = []
   parser.skip_statement_separators()
   while parser.peek() is Some(_) {

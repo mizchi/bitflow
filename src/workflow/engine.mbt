@@ -65,6 +65,43 @@ pub struct ExternalInputParseResult {
 }
 
 ///|
+fn convert_parse_result(
+  parsed : @starlark.StarlarkParseResult,
+) -> StarlarkParseResult {
+  let nodes : Array[FlowNode] = []
+  for node in parsed.workflow.nodes {
+    nodes.push(new_node(node.id, node.depends_on, required=node.required))
+  }
+  let tasks : Array[FlowTask] = []
+  for task in parsed.workflow.tasks {
+    tasks.push(
+      new_task(
+        task.id,
+        task.node,
+        task.cmd,
+        task.needs,
+        required=task.required,
+        srcs=task.srcs,
+        outs=task.outs,
+        env=task.env,
+        cwd=task.cwd,
+        trigger_mode=task.trigger_mode,
+      ),
+    )
+  }
+  {
+    ir: new_ir(
+      parsed.workflow.name,
+      nodes,
+      tasks,
+      entry_targets=parsed.workflow.entry_targets,
+      max_parallel=parsed.workflow.max_parallel,
+    ),
+    errors: parsed.errors,
+  }
+}
+
+///|
 fn trim_ascii_space(text : String) -> String {
   let mut start = 0
   let mut end = text.length()
@@ -680,20 +717,20 @@ pub fn execute_ir_for_changed_paths(
 }
 
 ///|
-pub fn parse_starlark_subset(text : String) -> StarlarkParseResult {
-  parse_starlark_subset_impl(text)
+pub fn parse(text : String) -> StarlarkParseResult {
+  convert_parse_result(@starlark.parse(text))
 }
 
 ///|
-pub fn parse_starlark_subset_with_inputs(
+pub fn parse_with_inputs(
   text : String,
   external_inputs : Map[String, String],
 ) -> StarlarkParseResult {
-  parse_starlark_subset_with_inputs_impl(text, external_inputs)
+  convert_parse_result(@starlark.parse_with_inputs(text, external_inputs))
 }
 
 ///|
-pub fn parse_starlark_subset_with_cli_env(
+pub fn parse_with_cli_env(
   text : String,
   cli_args : Array[String],
   env : Map[String, String],
@@ -706,16 +743,16 @@ pub fn parse_starlark_subset_with_cli_env(
     cli_flag~,
     env_prefix~,
   )
-  let parsed = parse_starlark_subset_with_inputs(text, input_result.values)
+  let parsed = parse_with_inputs(text, input_result.values)
   merge_parse_errors(parsed, input_result.errors)
 }
 
 ///|
-pub fn execute_starlark_subset(
+pub fn execute(
   text : String,
   run_task : (FlowTask) -> (Bool, String),
 ) -> FlowExecutionResult {
-  let parsed = parse_starlark_subset(text)
+  let parsed = parse(text)
   if parsed.errors.length() > 0 {
     return {
       ok: false,
@@ -729,12 +766,12 @@ pub fn execute_starlark_subset(
 }
 
 ///|
-pub fn execute_starlark_subset_with_inputs(
+pub fn execute_with_inputs(
   text : String,
   external_inputs : Map[String, String],
   run_task : (FlowTask) -> (Bool, String),
 ) -> FlowExecutionResult {
-  let parsed = parse_starlark_subset_with_inputs(text, external_inputs)
+  let parsed = parse_with_inputs(text, external_inputs)
   if parsed.errors.length() > 0 {
     return {
       ok: false,
@@ -748,7 +785,7 @@ pub fn execute_starlark_subset_with_inputs(
 }
 
 ///|
-pub fn execute_starlark_subset_with_cli_env(
+pub fn execute_with_cli_env(
   text : String,
   cli_args : Array[String],
   env : Map[String, String],
@@ -756,13 +793,7 @@ pub fn execute_starlark_subset_with_cli_env(
   cli_flag? : String = "--var",
   env_prefix? : String = "BITFLOW_VAR_",
 ) -> FlowExecutionResult {
-  let parsed = parse_starlark_subset_with_cli_env(
-    text,
-    cli_args,
-    env,
-    cli_flag~,
-    env_prefix~,
-  )
+  let parsed = parse_with_cli_env(text, cli_args, env, cli_flag~, env_prefix~)
   if parsed.errors.length() > 0 {
     return {
       ok: false,
@@ -799,24 +830,33 @@ pub fn execute_ir_with_adapter(
 }
 
 ///|
-pub fn parse_starlark_subset_from_fs(
+pub fn parse_from_fs(
   path : String,
   adapter : WorkflowAdapter,
 ) -> StarlarkParseResult {
-  parse_starlark_subset_from_fs_impl(path, adapter)
+  convert_parse_result(
+    @starlark.parse_from_fs(path, adapter.fs.exists, adapter.fs.read_text),
+  )
 }
 
 ///|
-pub fn parse_starlark_subset_from_fs_with_inputs(
+pub fn parse_from_fs_with_inputs(
   path : String,
   adapter : WorkflowAdapter,
   external_inputs : Map[String, String],
 ) -> StarlarkParseResult {
-  parse_starlark_subset_from_fs_with_inputs_impl(path, adapter, external_inputs)
+  convert_parse_result(
+    @starlark.parse_from_fs_with_inputs(
+      path,
+      adapter.fs.exists,
+      adapter.fs.read_text,
+      external_inputs,
+    ),
+  )
 }
 
 ///|
-pub fn parse_starlark_subset_from_fs_with_cli_env(
+pub fn parse_from_fs_with_cli_env(
   path : String,
   adapter : WorkflowAdapter,
   cli_args : Array[String],
@@ -830,20 +870,16 @@ pub fn parse_starlark_subset_from_fs_with_cli_env(
     cli_flag~,
     env_prefix~,
   )
-  let parsed = parse_starlark_subset_from_fs_with_inputs(
-    path,
-    adapter,
-    input_result.values,
-  )
+  let parsed = parse_from_fs_with_inputs(path, adapter, input_result.values)
   merge_parse_errors(parsed, input_result.errors)
 }
 
 ///|
-pub fn execute_starlark_subset_from_fs(
+pub fn execute_from_fs(
   path : String,
   adapter : WorkflowAdapter,
 ) -> FlowExecutionResult {
-  let parsed = parse_starlark_subset_from_fs(path, adapter)
+  let parsed = parse_from_fs(path, adapter)
   if parsed.errors.length() > 0 {
     return {
       ok: false,
@@ -857,14 +893,12 @@ pub fn execute_starlark_subset_from_fs(
 }
 
 ///|
-pub fn execute_starlark_subset_from_fs_with_inputs(
+pub fn execute_from_fs_with_inputs(
   path : String,
   adapter : WorkflowAdapter,
   external_inputs : Map[String, String],
 ) -> FlowExecutionResult {
-  let parsed = parse_starlark_subset_from_fs_with_inputs(
-    path, adapter, external_inputs,
-  )
+  let parsed = parse_from_fs_with_inputs(path, adapter, external_inputs)
   if parsed.errors.length() > 0 {
     return {
       ok: false,
@@ -878,7 +912,7 @@ pub fn execute_starlark_subset_from_fs_with_inputs(
 }
 
 ///|
-pub fn execute_starlark_subset_from_fs_with_cli_env(
+pub fn execute_from_fs_with_cli_env(
   path : String,
   adapter : WorkflowAdapter,
   cli_args : Array[String],
@@ -886,7 +920,7 @@ pub fn execute_starlark_subset_from_fs_with_cli_env(
   cli_flag? : String = "--var",
   env_prefix? : String = "BITFLOW_VAR_",
 ) -> FlowExecutionResult {
-  let parsed = parse_starlark_subset_from_fs_with_cli_env(
+  let parsed = parse_from_fs_with_cli_env(
     path,
     adapter,
     cli_args,

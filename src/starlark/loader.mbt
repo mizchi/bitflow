@@ -1,5 +1,5 @@
 ///|
-fn starlark_path_dirname(path : String) -> String {
+fn path_dirname(path : String) -> String {
   match path.rev_find("/") {
     Some(0) => "/"
     Some(idx) => String::unsafe_substring(path, start=0, end=idx)
@@ -8,7 +8,7 @@ fn starlark_path_dirname(path : String) -> String {
 }
 
 ///|
-fn starlark_path_normalize(path : String) -> String {
+fn path_normalize(path : String) -> String {
   let is_abs = path.has_prefix("/")
   let parts : Array[String] = []
   for view in path.split("/") {
@@ -41,35 +41,32 @@ fn starlark_path_normalize(path : String) -> String {
 }
 
 ///|
-fn starlark_resolve_load_path(base_path : String, raw_path : String) -> String {
+fn resolve_load_path(base_path : String, raw_path : String) -> String {
   if raw_path.has_prefix("/") {
-    starlark_path_normalize(raw_path)
+    path_normalize(raw_path)
   } else {
-    let base_dir = starlark_path_dirname(base_path)
+    let base_dir = path_dirname(base_path)
     if base_dir == "." {
-      starlark_path_normalize(raw_path)
+      path_normalize(raw_path)
     } else {
-      starlark_path_normalize(base_dir + "/" + raw_path)
+      path_normalize(base_dir + "/" + raw_path)
     }
   }
 }
 
 ///|
-fn starlark_workspace_root_from_path(path : String) -> String {
+fn workspace_root_from_path(path : String) -> String {
   if path.has_prefix("/") {
-    starlark_path_dirname(path)
+    path_dirname(path)
   } else {
     "."
   }
 }
 
 ///|
-fn starlark_is_within_workspace_root(
-  workspace_root : String,
-  path : String,
-) -> Bool {
-  let root = starlark_path_normalize(workspace_root)
-  let target = starlark_path_normalize(path)
+fn is_within_workspace_root(workspace_root : String, path : String) -> Bool {
+  let root = path_normalize(workspace_root)
+  let target = path_normalize(path)
   if root == "." {
     return not(target.has_prefix("..")) && not(target.has_prefix("/"))
   }
@@ -80,17 +77,14 @@ fn starlark_is_within_workspace_root(
 }
 
 ///|
-fn starlark_load_path_from_call(
-  call : StarlarkCall,
-  errors : Array[String],
-) -> String? {
-  let args = starlark_arg_map(call, errors)
-  starlark_validate_call_shape(call, args, errors)
+fn load_path_from_call(call : StarlarkCall, errors : Array[String]) -> String? {
+  let args = arg_map(call, errors)
+  validate_call_shape(call, args, errors)
   guard args.get("path") is Some(target) else { return None }
   match target.value {
     Str(path) => Some(path)
     _ => {
-      starlark_semantic_error(
+      semantic_error(
         errors,
         target.line,
         target.column,
@@ -102,17 +96,17 @@ fn starlark_load_path_from_call(
 }
 
 ///|
-fn starlark_collect_calls_from_fs(
+fn collect_calls_from_fs(
   path : String,
   workspace_root : String,
-  adapter : WorkflowAdapter,
+  read_text : (String) -> String?,
   calls : Array[StarlarkCall],
   errors : Array[String],
   visiting : Map[String, Bool],
   loaded : Map[String, Bool],
   stack : Array[String],
 ) -> Unit {
-  let normalized = starlark_path_normalize(path)
+  let normalized = path_normalize(path)
   if loaded.get(normalized).unwrap_or(false) {
     return
   }
@@ -128,25 +122,23 @@ fn starlark_collect_calls_from_fs(
   visiting[normalized] = true
   stack.push(normalized)
 
-  match (adapter.fs.read_text)(normalized) {
+  match read_text(normalized) {
     Some(text) => {
-      let syntax = parse_starlark_syntax(text)
+      let syntax = parse_syntax(text)
       for err in syntax.errors {
         errors.push(normalized + ": " + err)
       }
       for call in syntax.calls {
         if call.name == "load" {
-          match starlark_load_path_from_call(call, errors) {
+          match load_path_from_call(call, errors) {
             Some(raw_path) => {
-              let resolved = starlark_resolve_load_path(normalized, raw_path)
-              if not(
-                  starlark_is_within_workspace_root(workspace_root, resolved),
-                ) {
+              let resolved = resolve_load_path(normalized, raw_path)
+              if not(is_within_workspace_root(workspace_root, resolved)) {
                 errors.push("load path escapes workspace root: " + resolved)
                 continue
               }
-              starlark_collect_calls_from_fs(
-                resolved, workspace_root, adapter, calls, errors, visiting, loaded,
+              collect_calls_from_fs(
+                resolved, workspace_root, read_text, calls, errors, visiting, loaded,
                 stack,
               )
             }
@@ -166,24 +158,32 @@ fn starlark_collect_calls_from_fs(
 }
 
 ///|
-fn parse_starlark_subset_from_fs_impl(
+fn parse_from_fs_impl(
   path : String,
-  adapter : WorkflowAdapter,
+  exists : (String) -> Bool,
+  read_text : (String) -> String?,
 ) -> StarlarkParseResult {
-  parse_starlark_subset_from_fs_with_inputs_impl(path, adapter, {})
+  parse_from_fs_with_inputs_impl(path, exists, read_text, {})
 }
 
 ///|
-fn parse_starlark_subset_from_fs_with_inputs_impl(
+fn parse_from_fs_with_inputs_impl(
   path : String,
-  adapter : WorkflowAdapter,
+  exists : (String) -> Bool,
+  read_text : (String) -> String?,
   external_inputs : Map[String, String],
 ) -> StarlarkParseResult {
-  let normalized = starlark_path_normalize(path)
-  let workspace_root = starlark_workspace_root_from_path(normalized)
-  if (adapter.fs.exists)(normalized) == false {
+  let normalized = path_normalize(path)
+  let workspace_root = workspace_root_from_path(normalized)
+  if exists(normalized) == false {
     return {
-      ir: new_ir("default", [], []),
+      workflow: {
+        name: "default",
+        max_parallel: 1,
+        nodes: [],
+        tasks: [],
+        entry_targets: [],
+      },
       errors: ["failed to read workflow file: " + path],
     }
   }
@@ -193,8 +193,28 @@ fn parse_starlark_subset_from_fs_with_inputs_impl(
   let visiting : Map[String, Bool] = {}
   let loaded : Map[String, Bool] = {}
   let stack : Array[String] = []
-  starlark_collect_calls_from_fs(
-    normalized, workspace_root, adapter, calls, load_errors, visiting, loaded, stack,
+  collect_calls_from_fs(
+    normalized, workspace_root, read_text, calls, load_errors, visiting, loaded,
+    stack,
   )
-  parse_starlark_calls_impl(calls, load_errors, external_inputs)
+  parse_calls_impl(calls, load_errors, external_inputs)
+}
+
+///|
+pub fn parse_from_fs(
+  path : String,
+  exists : (String) -> Bool,
+  read_text : (String) -> String?,
+) -> StarlarkParseResult {
+  parse_from_fs_impl(path, exists, read_text)
+}
+
+///|
+pub fn parse_from_fs_with_inputs(
+  path : String,
+  exists : (String) -> Bool,
+  read_text : (String) -> String?,
+  external_inputs : Map[String, String],
+) -> StarlarkParseResult {
+  parse_from_fs_with_inputs_impl(path, exists, read_text, external_inputs)
 }

@@ -153,7 +153,7 @@ fn parse_chunk_source_line(line : String) -> (String, String?) {
 }
 
 ///|
-fn parse_starlark_go_chunked_cases(text : String) -> Array[(String, String?)] {
+fn parse_go_chunked_cases(text : String) -> Array[(String, String?)] {
   let lines : Array[String] = []
   for view in text.split("\n") {
     lines.push(view.to_string())
@@ -194,7 +194,7 @@ fn parse_starlark_go_chunked_cases(text : String) -> Array[(String, String?)] {
 }
 
 ///|
-fn starlark_go_errors_subset_chunked_embedded() -> String {
+fn go_errors_subset_chunked_embedded() -> String {
   let text =
     #|# source=embedded-fallback
     #|workflow(1+2 = 3) ### "keyword argument must have form name=expr"
@@ -219,7 +219,7 @@ fn starlark_go_errors_subset_chunked_embedded() -> String {
 
 ///|
 #cfg(target="js")
-extern "js" fn read_starlark_go_errors_subset_from_fs() -> String? =
+extern "js" fn read_go_errors_subset_from_fs() -> String? =
   #| function() {
   #|   try {
   #|     const fs = require("node:fs");
@@ -246,9 +246,9 @@ extern "js" fn read_starlark_go_errors_subset_from_fs() -> String? =
 
 ///|
 #cfg(target="js")
-fn starlark_go_errors_subset_chunked() -> String {
-  let fallback = starlark_go_errors_subset_chunked_embedded()
-  match read_starlark_go_errors_subset_from_fs() {
+fn go_errors_subset_chunked() -> String {
+  let fallback = go_errors_subset_chunked_embedded()
+  match read_go_errors_subset_from_fs() {
     Some(text) => text
     None => fallback
   }
@@ -256,19 +256,19 @@ fn starlark_go_errors_subset_chunked() -> String {
 
 ///|
 #cfg(not(target="js"))
-fn starlark_go_errors_subset_chunked() -> String {
-  starlark_go_errors_subset_chunked_embedded()
+fn go_errors_subset_chunked() -> String {
+  go_errors_subset_chunked_embedded()
 }
 
 ///|
 #cfg(target="js")
-fn expected_starlark_go_errors_source_marker() -> String {
+fn expected_go_errors_source_marker() -> String {
   "# source=external-file"
 }
 
 ///|
 #cfg(not(target="js"))
-fn expected_starlark_go_errors_source_marker() -> String {
+fn expected_go_errors_source_marker() -> String {
   "# source=embedded-fallback"
 }
 
@@ -479,7 +479,7 @@ test "workflow engine: starlark subset parses and runs" {
     #|task(id="root:build", node="root", cmd="build", needs=[])
     #|task(id="dep:test", node="dep", cmd="test", needs=["root:build"])
     #|entrypoint(targets=["dep:test"])
-  let parsed = parse_starlark_subset(src)
+  let parsed = parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.nodes.length(), 2)
   assert_eq(parsed.ir.tasks.length(), 2)
@@ -493,7 +493,7 @@ test "workflow engine: starlark subset parser reports unknown function" {
   let src =
     #|workflow(name="ci")
     #|unknown_call(x="y")
-  let parsed = parse_starlark_subset(src)
+  let parsed = parse(src)
   assert_true(parsed.errors.length() > 0)
   assert_true(parsed.errors.join("\n").contains("unknown statement"))
 }
@@ -505,7 +505,7 @@ test "workflow engine: starlark parser supports cmd array and inline comments" {
     #|node(id="root", depends_on=[])
     #|task(id="root:test", node="root", cmd=["just", "test"], needs=[]) # tail comment
     #|entrypoint(targets=["root:test"])
-  let parsed = parse_starlark_subset(src)
+  let parsed = parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.tasks.length(), 1)
   assert_eq(parsed.ir.tasks[0].cmd, "just test")
@@ -530,7 +530,7 @@ test "workflow engine: starlark task supports srcs outs cwd and trigger" {
     #|  trigger="manual",
     #|)
     #|entrypoint(targets=["root:build"])
-  let parsed = parse_starlark_subset(src)
+  let parsed = parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.tasks.length(), 1)
   let task = parsed.ir.tasks[0]
@@ -555,7 +555,7 @@ test "workflow engine: starlark target alias maps to task semantics" {
     #|  srcs=["packages/root/**"],
     #|)
     #|entrypoint(targets=["root:build"])
-  let parsed = parse_starlark_subset(src)
+  let parsed = parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.tasks.length(), 1)
   let task = parsed.ir.tasks[0]
@@ -578,7 +578,7 @@ test "workflow engine: starlark task supports env dict" {
     #|  env={"NODE_ENV": "test", "CI": "1"},
     #|)
     #|entrypoint(targets=["root:build"])
-  let parsed = parse_starlark_subset(src)
+  let parsed = parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.tasks.length(), 1)
   let env = parsed.ir.tasks[0].env
@@ -598,7 +598,7 @@ test "workflow engine: starlark task env rejects non-string value" {
     #|  needs=[],
     #|  env={"CI": 1},
     #|)
-  let parsed = parse_starlark_subset(src)
+  let parsed = parse(src)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("task.env must be {string:string}"))
 }
@@ -617,7 +617,7 @@ test "workflow engine: starlark assignment binds and references values" {
     #|task(id=target_id, node=target_node, cmd=build_cmd, needs=[], srcs=task_srcs, env=task_env)
     #|entry_targets = [target_id]
     #|entrypoint(targets=entry_targets)
-  let parsed = parse_starlark_subset(src)
+  let parsed = parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.name, "ci")
   assert_eq(parsed.ir.entry_targets.length(), 1)
@@ -636,7 +636,7 @@ test "workflow engine: starlark assignment reports unknown variable reference" {
     #|workflow(name="ci")
     #|node(id="root", depends_on=[])
     #|task(id="root:build", node="root", cmd=unknown_cmd, needs=[])
-  let parsed = parse_starlark_subset(src)
+  let parsed = parse(src)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("unknown variable 'unknown_cmd'"))
 }
@@ -653,7 +653,7 @@ test "workflow engine: starlark var binds default value by name" {
     #|node(id=node_id, depends_on=[])
     #|task(id=task_id, node=node_id, cmd=task_cmd, needs=[], env=task_env)
     #|entrypoint(targets=[task_id])
-  let parsed = parse_starlark_subset(src)
+  let parsed = parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.name, "ci")
   assert_eq(parsed.ir.tasks.length(), 1)
@@ -671,7 +671,7 @@ test "workflow engine: starlark config overrides var binding" {
     #|node(id="root", depends_on=[])
     #|task(id="root:build", node="root", cmd=["echo", profile], needs=[], env={"PROFILE": profile})
     #|entrypoint(targets=["root:build"])
-  let parsed = parse_starlark_subset(src)
+  let parsed = parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.tasks.length(), 1)
   let task = parsed.ir.tasks[0]
@@ -687,7 +687,7 @@ test "workflow engine: starlark var type enforces default and config values" {
     #|workflow(name="ci", max_parallel=retries)
     #|node(id="root", depends_on=[])
     #|task(id="root:build", node="root", cmd="build", needs=[])
-  let parsed = parse_starlark_subset(src)
+  let parsed = parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.max_parallel, 3)
   assert_eq(parsed.ir.tasks.length(), 1)
@@ -698,7 +698,7 @@ test "workflow engine: starlark var type enforces default and config values" {
 test "workflow engine: starlark var type rejects default mismatch" {
   let src =
     #|var(name="retries", type="int", default="1")
-  let parsed = parse_starlark_subset(src)
+  let parsed = parse(src)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("var.default must match type 'int'"))
 }
@@ -708,7 +708,7 @@ test "workflow engine: starlark var type rejects config mismatch" {
   let src =
     #|var(name="retries", type="int", default=1)
     #|config(name="retries", value="3")
-  let parsed = parse_starlark_subset(src)
+  let parsed = parse(src)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("config.value for 'retries' must match type 'int'"))
 }
@@ -717,7 +717,7 @@ test "workflow engine: starlark var type rejects config mismatch" {
 test "workflow engine: starlark var type rejects unknown type name" {
   let src =
     #|var(name="mode", type="unknown", default="dev")
-  let parsed = parse_starlark_subset(src)
+  let parsed = parse(src)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("var.type must be one of"))
 }
@@ -726,7 +726,7 @@ test "workflow engine: starlark var type rejects unknown type name" {
 test "workflow engine: starlark config requires declared var" {
   let src =
     #|config(name="mode", value="prod")
-  let parsed = parse_starlark_subset(src)
+  let parsed = parse(src)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("config.name 'mode' is not declared by var()"))
 }
@@ -739,7 +739,7 @@ test "workflow engine: starlark required var can be injected by external inputs"
     #|node(id="root", depends_on=[])
     #|task(id="root:build", node="root", cmd=["echo", profile], needs=[])
     #|entrypoint(targets=["root:build"])
-  let parsed = parse_starlark_subset_with_inputs(src, { "profile": "prod" })
+  let parsed = parse_with_inputs(src, { "profile": "prod" })
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.name, "prod")
   assert_eq(parsed.ir.tasks.length(), 1)
@@ -754,7 +754,7 @@ test "workflow engine: starlark required var allows missing default with externa
     #|node(id="root", depends_on=[])
     #|task(id="root:build", node="root", cmd=["echo", profile], needs=[])
     #|entrypoint(targets=["root:build"])
-  let parsed = parse_starlark_subset_with_inputs(src, { "profile": "prod" })
+  let parsed = parse_with_inputs(src, { "profile": "prod" })
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.name, "prod")
   assert_eq(parsed.ir.tasks[0].cmd, "echo prod")
@@ -767,7 +767,7 @@ test "workflow engine: starlark required var reports error when unresolved" {
     #|workflow(name=profile)
     #|node(id="root", depends_on=[])
     #|task(id="root:build", node="root", cmd=["echo", profile], needs=[])
-  let parsed = parse_starlark_subset(src)
+  let parsed = parse(src)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("required var 'profile' must be provided"))
 }
@@ -776,7 +776,7 @@ test "workflow engine: starlark required var reports error when unresolved" {
 test "workflow engine: starlark non-required var without default reports semantic error" {
   let src =
     #|var(name="profile")
-  let parsed = parse_starlark_subset(src)
+  let parsed = parse(src)
   let text = parsed.errors.join("\n")
   assert_true(
     text.contains("var.default is required when var.required is false"),
@@ -788,7 +788,7 @@ test "workflow engine: starlark unresolved var default does not emit required-va
   let src =
     #|var(name="profile", required=True, default=unknown_profile)
     #|workflow(name="ci")
-  let parsed = parse_starlark_subset(src)
+  let parsed = parse(src)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("unknown variable 'unknown_profile'"))
   assert_eq(
@@ -807,7 +807,7 @@ test "workflow engine: starlark required var is resolved by config override" {
     #|workflow(name=profile)
     #|node(id="root", depends_on=[])
     #|task(id="root:build", node="root", cmd=["echo", profile], needs=[])
-  let parsed = parse_starlark_subset(src)
+  let parsed = parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.name, "prod")
   assert_eq(parsed.ir.tasks[0].cmd, "echo prod")
@@ -819,7 +819,7 @@ test "workflow engine: starlark config before var reports declaration-order erro
     #|config(name="profile", value="prod")
     #|var(name="profile", default="dev")
     #|workflow(name=profile)
-  let parsed = parse_starlark_subset(src)
+  let parsed = parse(src)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("config.name 'profile' is not declared by var()"))
 }
@@ -834,7 +834,7 @@ test "workflow engine: starlark external inputs follow var type conversion" {
     #|workflow(name="ci", max_parallel=retries)
     #|node(id="root", depends_on=[])
     #|task(id="root:build", node="root", cmd=labels, needs=[], env=env_map, required=enable_cache)
-  let parsed = parse_starlark_subset_with_inputs(src, {
+  let parsed = parse_with_inputs(src, {
     "retries": "3",
     "enable_cache": "true",
     "labels": "prod,release",
@@ -852,7 +852,7 @@ test "workflow engine: starlark external inputs follow var type conversion" {
 test "workflow engine: starlark external input conversion reports type errors" {
   let src =
     #|var(name="retries", type="int", required=True, default=1)
-  let parsed = parse_starlark_subset_with_inputs(src, { "retries": "abc" })
+  let parsed = parse_with_inputs(src, { "retries": "abc" })
   let text = parsed.errors.join("\n")
   assert_true(text.contains("external input for 'retries' must be int"))
 }
@@ -893,10 +893,7 @@ test "workflow engine: starlark reports unknown external input key" {
   let src =
     #|var(name="profile", default="dev")
     #|workflow(name=profile)
-  let parsed = parse_starlark_subset_with_inputs(src, {
-    "profile": "prod",
-    "profiel": "typo",
-  })
+  let parsed = parse_with_inputs(src, { "profile": "prod", "profiel": "typo" })
   let text = parsed.errors.join("\n")
   assert_true(
     text.contains("external input 'profiel' is not declared by var()"),
@@ -904,11 +901,11 @@ test "workflow engine: starlark reports unknown external input key" {
 }
 
 ///|
-test "workflow engine: parse_starlark_subset_with_cli_env injects vars" {
+test "workflow engine: parse_with_cli_env injects vars" {
   let src =
     #|var(name="profile", type="string", required=True, default="dev")
     #|workflow(name=profile)
-  let parsed = parse_starlark_subset_with_cli_env(src, ["--var=profile=prod"], {})
+  let parsed = parse_with_cli_env(src, ["--var=profile=prod"], {})
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.name, "prod")
 }
@@ -979,13 +976,13 @@ test "workflow engine: changed paths can target auto task by outs patterns" {
 }
 
 ///|
-test "workflow engine: execute_starlark_subset runs parsed workflow directly" {
+test "workflow engine: execute runs parsed workflow directly" {
   let src =
     #|workflow(name="ci")
     #|node(id="root", depends_on=[])
     #|task(id="root:build", node="root", cmd="build", needs=[])
     #|entrypoint(targets=["root:build"])
-  let result = execute_starlark_subset(src, run_ok)
+  let result = execute(src, run_ok)
   assert_eq(result.ok, true)
   assert_eq(result.state, "completed")
   assert_eq(result.order.length(), 1)
@@ -996,7 +993,7 @@ test "workflow engine: execute_starlark_subset runs parsed workflow directly" {
 test "workflow engine: starlark compatibility accepts semicolon separated calls" {
   let src =
     #|workflow(name='ci'); node(id='root', depends_on=[]); task(id='root:build', node='root', cmd='build', needs=[]); entrypoint(targets=['root:build'])
-  let parsed = parse_starlark_subset(src)
+  let parsed = parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.name, "ci")
   assert_eq(parsed.ir.nodes.length(), 1)
@@ -1011,7 +1008,7 @@ test "workflow engine: starlark compatibility accepts trailing comma in call arg
     #|node(id="root", depends_on=[],)
     #|task(id="root:test", node="root", cmd=["just", "test",], needs=[],)
     #|entrypoint(targets=["root:test"],)
-  let parsed = parse_starlark_subset(src)
+  let parsed = parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.tasks.length(), 1)
   assert_eq(parsed.ir.tasks[0].cmd, "just test")
@@ -1024,7 +1021,7 @@ test "workflow engine: starlark compatibility supports single quote and bool lit
     #|node(id='root', depends_on=[], required=False)
     #|task(id='root:lint', node='root', cmd='lint', needs=[], required=True)
     #|entrypoint(targets=['root:lint'])
-  let parsed = parse_starlark_subset(src)
+  let parsed = parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.nodes.length(), 1)
   assert_eq(parsed.ir.nodes[0].required, false)
@@ -1038,7 +1035,7 @@ test "workflow engine: starlark semantics rejects unknown keyword argument" {
     #|node(id="root", depends_on=[])
     #|task(id="root:build", node="root", cmd="build", needs=[])
     #|entrypoint(targets=["root:build"])
-  let parsed = parse_starlark_subset(src)
+  let parsed = parse(src)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("unknown argument"))
 }
@@ -1047,7 +1044,7 @@ test "workflow engine: starlark semantics rejects unknown keyword argument" {
 test "workflow engine: starlark semantics rejects duplicate keyword argument" {
   let src =
     #|workflow(name="ci", name="prod")
-  let parsed = parse_starlark_subset(src)
+  let parsed = parse(src)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("duplicate argument"))
 }
@@ -1061,7 +1058,7 @@ test "workflow engine: starlark semantics validates list element types" {
     #|task(id="root:build", node="root", cmd="build", needs=[])
     #|task(id="dep:test", node="dep", cmd="test", needs=["root:build"])
     #|entrypoint(targets=["dep:test"])
-  let parsed = parse_starlark_subset(src)
+  let parsed = parse(src)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("depends_on"))
 }
@@ -1072,7 +1069,7 @@ test "workflow engine: starlark compatibility rejects splat arguments" {
     #|workflow(name="ci")
     #|node(id="root", depends_on=[])
     #|task(id="root:build", node="root", cmd="build", *, needs=[])
-  let parsed = parse_starlark_subset(src)
+  let parsed = parse(src)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("splat arguments"))
 }
@@ -1081,7 +1078,7 @@ test "workflow engine: starlark compatibility rejects splat arguments" {
 test "workflow engine: starlark compatibility requires name=expr keyword syntax" {
   let src =
     #|workflow(1+2 = 3)
-  let parsed = parse_starlark_subset(src)
+  let parsed = parse(src)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("keyword argument must have form name=expr"))
 }
@@ -1109,7 +1106,7 @@ test "workflow engine: starlark-go errors.star failure subset" {
   ]
   for entry in cases {
     let (source, expected) = entry
-    let parsed = parse_starlark_subset(source)
+    let parsed = parse(source)
     let text = parsed.errors.join("\n")
     assert_true(text.contains(expected))
   }
@@ -1130,21 +1127,21 @@ test "workflow engine: starlark-go errors.star trailing comma subset" {
     #|entrypoint(targets=['root:build',],)
   let cases = [case_trailing_comma_a, case_trailing_comma_b]
   for source in cases {
-    let parsed = parse_starlark_subset(source)
+    let parsed = parse(source)
     assert_eq(parsed.errors.length(), 0)
   }
 }
 
 ///|
 test "workflow engine: starlark-go chunked errors subset is executable" {
-  let chunked_text = starlark_go_errors_subset_chunked()
-  let source_marker = expected_starlark_go_errors_source_marker()
+  let chunked_text = go_errors_subset_chunked()
+  let source_marker = expected_go_errors_source_marker()
   assert_true(chunked_text.contains(source_marker))
-  let cases = parse_starlark_go_chunked_cases(chunked_text)
+  let cases = parse_go_chunked_cases(chunked_text)
   assert_eq(cases.length(), 5)
   for entry in cases {
     let (source, expected) = entry
-    let parsed = parse_starlark_subset(source)
+    let parsed = parse(source)
     match expected {
       Some(msg) => assert_true(parsed.errors.join("\n").contains(msg))
       None => assert_eq(parsed.errors.length(), 0)

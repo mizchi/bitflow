@@ -107,7 +107,7 @@ test {
 }
 ```
 
-## parse_starlark_subset
+## parse
 
 Parse a simple Starlark subset for workflow config.
 
@@ -119,7 +119,7 @@ test {
     #|node(id="root", depends_on=[])
     #|task(id="root:build", node="root", cmd="build", needs=[])
     #|entrypoint(targets=["root:build"])
-  let parsed = parse_starlark_subset(src)
+  let parsed = parse(src)
   inspect(parsed.errors.length(), content="0")
   inspect(parsed.ir.tasks.length(), content="1")
 }
@@ -127,7 +127,7 @@ test {
 
 ## load (fs parse mode)
 
-`parse_starlark_subset_from_fs` / `execute_starlark_subset_from_fs` supports
+`parse_from_fs` / `execute_from_fs` supports
 `load("path.star")` to split workflow definitions.
 
 `load` is a DSL subset feature:
@@ -152,7 +152,7 @@ test {
     FsAdapter::memory_with({ "workflow.star": root, "defs/common.star": common }),
     CommandAdapter::none(),
   )
-  let parsed = parse_starlark_subset_from_fs("workflow.star", adapter)
+  let parsed = parse_from_fs("workflow.star", adapter)
   inspect(parsed.errors.length(), content="0")
   inspect(parsed.ir.tasks.length(), content="2")
 }
@@ -182,7 +182,7 @@ test {
       command_success(stdout="ok")
     }),
   )
-  let result = execute_starlark_subset_from_fs("workflow.star", adapter)
+  let result = execute_from_fs("workflow.star", adapter)
   inspect(result.ok, content="true")
   inspect(write_execution_report("report.txt", result, adapter), content="true")
 }
