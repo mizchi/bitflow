@@ -8,8 +8,12 @@ pub fn parse_main_cli_args(Array[String]) -> CliRunSpec
 
 // Types and methods
 pub struct CliRunSpec {
+  command : String
   show_help : Bool
   workflow_path : String
+  cache_store_path : String
+  signatures : Map[String, String]
+  success_task_ids : Array[String]
   errors : Array[String]
 }
 

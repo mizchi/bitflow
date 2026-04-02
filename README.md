@@ -42,7 +42,37 @@ BITFLOW_VAR_profile=prod moon run src/main -- path/to/workflow.star
 Supported forms:
 
 - `bitflow [check] <workflow.star> [--var KEY=VALUE]...`
+- `bitflow cache-plan <workflow.star> --cache-store <path> [--signature KEY=VALUE]...`
+- `bitflow cache-writeback <workflow.star> --cache-store <path> [--signature KEY=VALUE] [--success TASK_ID]...`
 - env override prefix: `BITFLOW_VAR_`
+
+### Cache Integration Contract
+
+`bitflow` can now act as the cache decision/writeback boundary for external
+runners such as `actrun`.
+
+1. Ask for hit/miss decisions:
+
+```bash
+moon run src/main -- \
+  cache-plan workflow.star \
+  --cache-store .bitflow-cache.json \
+  --signature root=sig-root \
+  --signature dep=sig-dep
+```
+
+2. After successful task execution, write fingerprints back:
+
+```bash
+moon run src/main -- \
+  cache-writeback workflow.star \
+  --cache-store .bitflow-cache.json \
+  --signature root=sig-root \
+  --success root:build
+```
+
+`cache-plan` and `cache-writeback` both emit structured JSON to stdout.
+The intended lifecycle is `plan -> run -> writeback -> next plan`.
 
 ## Starlark Subset Contract
 

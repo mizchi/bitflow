@@ -19,7 +19,7 @@ fn path_normalize(path : String) -> String {
     if part == ".." {
       if parts.length() > 0 && parts[parts.length() - 1] != ".." {
         parts.pop() |> ignore
-      } else if not(is_abs) {
+      } else if !is_abs {
         parts.push(part)
       }
       continue
@@ -68,7 +68,7 @@ fn is_within_workspace_root(workspace_root : String, path : String) -> Bool {
   let root = path_normalize(workspace_root)
   let target = path_normalize(path)
   if root == "." {
-    return not(target.has_prefix("..")) && not(target.has_prefix("/"))
+    return !target.has_prefix("..") && !target.has_prefix("/")
   }
   if root == "/" {
     return target.has_prefix("/")
@@ -137,7 +137,7 @@ fn def_alias_call(base : StarlarkCall, local_name : String) -> StarlarkCall {
       args.push(arg)
     }
   }
-  if not(replaced) {
+  if !replaced {
     args.push({
       name: "name",
       value: Str(local_name),
@@ -307,7 +307,7 @@ fn collect_calls_from_fs(
           match load_spec_from_call(call, errors) {
             Some(spec) => {
               let resolved = resolve_load_path(normalized, spec.path)
-              if not(is_within_workspace_root(workspace_root, resolved)) {
+              if !is_within_workspace_root(workspace_root, resolved) {
                 errors.push("load path escapes workspace root: " + resolved)
                 continue
               }

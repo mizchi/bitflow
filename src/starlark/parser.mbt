@@ -212,7 +212,7 @@ fn StarlarkParser::skip_inline_space(self : StarlarkParser) -> Unit {
 
 ///|
 fn StarlarkParser::skip_comment(self : StarlarkParser) -> Unit {
-  if not(self.consume_char('#')) {
+  if !self.consume_char('#') {
     return
   }
   while self.peek() is Some(ch) {
@@ -239,7 +239,7 @@ fn StarlarkParser::skip_statement_separators(self : StarlarkParser) -> Unit {
       self.skip_comment()
       progressed = true
     }
-    if not(progressed) {
+    if !progressed {
       break
     }
   }
@@ -261,7 +261,7 @@ fn StarlarkParser::skip_value_space(self : StarlarkParser) -> Unit {
       self.skip_comment()
       progressed = true
     }
-    if not(progressed) {
+    if !progressed {
       break
     }
   }
@@ -395,7 +395,7 @@ fn StarlarkParser::parse_list(self : StarlarkParser) -> StarlarkValue? {
       }
     }
     self.skip_value_space()
-    if not(self.consume_keyword("in")) {
+    if !self.consume_keyword("in") {
       self.push_error("list comprehension requires 'in'")
       return None
     }
@@ -414,7 +414,7 @@ fn StarlarkParser::parse_list(self : StarlarkParser) -> StarlarkValue? {
       }
       self.skip_value_space()
     }
-    if not(self.consume_char(']')) {
+    if !self.consume_char(']') {
       self.push_error("expected ']' to close list comprehension")
       return None
     }
@@ -483,7 +483,7 @@ fn StarlarkParser::parse_dict(self : StarlarkParser) -> StarlarkValue? {
   }
 
   self.skip_value_space()
-  if not(self.consume_char(':')) {
+  if !self.consume_char(':') {
     self.push_error("expected ':' after dict key")
     self.recover_to_arg_boundary()
     if self.consume_char('}') {
@@ -515,7 +515,7 @@ fn StarlarkParser::parse_dict(self : StarlarkParser) -> StarlarkValue? {
       }
     }
     self.skip_value_space()
-    if not(self.consume_keyword("in")) {
+    if !self.consume_keyword("in") {
       self.push_error("dict comprehension requires 'in'")
       return None
     }
@@ -534,7 +534,7 @@ fn StarlarkParser::parse_dict(self : StarlarkParser) -> StarlarkValue? {
       }
       self.skip_value_space()
     }
-    if not(self.consume_char('}')) {
+    if !self.consume_char('}') {
       self.push_error("expected '}' to close dict comprehension")
       return None
     }
@@ -571,7 +571,7 @@ fn StarlarkParser::parse_dict(self : StarlarkParser) -> StarlarkValue? {
       }
 
       self.skip_value_space()
-      if not(self.consume_char(':')) {
+      if !self.consume_char(':') {
         self.push_error("expected ':' after dict key")
         self.recover_to_arg_boundary()
         if self.consume_char('}') {
@@ -664,7 +664,7 @@ fn StarlarkParser::parse_primary_value(self : StarlarkParser) -> StarlarkValue? 
               Some(value) => items.push(value)
               None => {
                 self.skip_value_space()
-                if not(self.consume_char(')')) {
+                if !self.consume_char(')') {
                   self.push_error("expected ')' to close expression")
                 }
                 return None
@@ -681,7 +681,7 @@ fn StarlarkParser::parse_primary_value(self : StarlarkParser) -> StarlarkValue? 
             return None
           }
         }
-        if not(self.consume_char(')')) {
+        if !self.consume_char(')') {
           self.push_error("expected ')' to close expression")
           return None
         }
@@ -689,7 +689,7 @@ fn StarlarkParser::parse_primary_value(self : StarlarkParser) -> StarlarkValue? 
       }
       None => {
         self.skip_value_space()
-        if not(self.consume_char(')')) {
+        if !self.consume_char(')') {
           self.push_error("expected ')' to close expression")
         }
         return None
@@ -723,12 +723,12 @@ fn StarlarkParser::parse_value(self : StarlarkParser) -> StarlarkValue? {
 fn StarlarkParser::parse_if_value(self : StarlarkParser) -> StarlarkValue? {
   guard self.parse_or_value() is Some(then_value) else { return None }
   self.skip_inline_space()
-  if not(self.consume_keyword("if")) {
+  if !self.consume_keyword("if") {
     return Some(then_value)
   }
   guard self.parse_or_value() is Some(cond_value) else { return None }
   self.skip_inline_space()
-  if not(self.consume_keyword("else")) {
+  if !self.consume_keyword("else") {
     self.push_error("expected 'else' in conditional expression")
     return None
   }
@@ -742,7 +742,7 @@ fn StarlarkParser::parse_or_value(self : StarlarkParser) -> StarlarkValue? {
   let mut value = first
   while true {
     self.skip_inline_space()
-    if not(self.consume_keyword("or")) {
+    if !self.consume_keyword("or") {
       break
     }
     match self.parse_and_value() {
@@ -759,7 +759,7 @@ fn StarlarkParser::parse_and_value(self : StarlarkParser) -> StarlarkValue? {
   let mut value = first
   while true {
     self.skip_inline_space()
-    if not(self.consume_keyword("and")) {
+    if !self.consume_keyword("and") {
       break
     }
     match self.parse_not_value() {
@@ -882,7 +882,7 @@ fn StarlarkParser::parse_postfix_value(self : StarlarkParser) -> StarlarkValue? 
         return None
       }
       self.skip_value_space()
-      if not(self.consume_char('(')) {
+      if !self.consume_char('(') {
         self.push_error("expected '(' after method name")
         return None
       }
@@ -894,15 +894,15 @@ fn StarlarkParser::parse_postfix_value(self : StarlarkParser) -> StarlarkValue? 
         None => return None
       }
     }
-    if not(self.consume_char('[')) {
+    if !self.consume_char('[') {
       break
     }
     self.skip_value_space()
     if self.consume_char(':') {
       let (ok, end_bound) = self.parse_slice_bound_optional()
-      if not(ok) {
+      if !ok {
         self.skip_value_space()
-        if not(self.consume_char(']')) {
+        if !self.consume_char(']') {
           self.push_error("expected ']' to close slice expression")
         }
         return None
@@ -911,9 +911,9 @@ fn StarlarkParser::parse_postfix_value(self : StarlarkParser) -> StarlarkValue? 
       self.skip_value_space()
       if self.consume_char(':') {
         let (step_ok, parsed_step) = self.parse_slice_bound_optional()
-        if not(step_ok) {
+        if !step_ok {
           self.skip_value_space()
-          if not(self.consume_char(']')) {
+          if !self.consume_char(']') {
             self.push_error("expected ']' to close slice expression")
           }
           return None
@@ -921,7 +921,7 @@ fn StarlarkParser::parse_postfix_value(self : StarlarkParser) -> StarlarkValue? 
         step_bound = parsed_step
       }
       self.skip_value_space()
-      if not(self.consume_char(']')) {
+      if !self.consume_char(']') {
         self.push_error("expected ']' to close slice expression")
         return None
       }
@@ -933,7 +933,7 @@ fn StarlarkParser::parse_postfix_value(self : StarlarkParser) -> StarlarkValue? 
       Some(parsed) => parsed
       None => {
         self.skip_value_space()
-        if not(self.consume_char(']')) {
+        if !self.consume_char(']') {
           self.push_error("expected ']' to close index expression")
         }
         return None
@@ -942,9 +942,9 @@ fn StarlarkParser::parse_postfix_value(self : StarlarkParser) -> StarlarkValue? 
     self.skip_value_space()
     if self.consume_char(':') {
       let (ok, end_bound) = self.parse_slice_bound_optional()
-      if not(ok) {
+      if !ok {
         self.skip_value_space()
-        if not(self.consume_char(']')) {
+        if !self.consume_char(']') {
           self.push_error("expected ']' to close slice expression")
         }
         return None
@@ -953,9 +953,9 @@ fn StarlarkParser::parse_postfix_value(self : StarlarkParser) -> StarlarkValue? 
       self.skip_value_space()
       if self.consume_char(':') {
         let (step_ok, parsed_step) = self.parse_slice_bound_optional()
-        if not(step_ok) {
+        if !step_ok {
           self.skip_value_space()
-          if not(self.consume_char(']')) {
+          if !self.consume_char(']') {
             self.push_error("expected ']' to close slice expression")
           }
           return None
@@ -963,14 +963,14 @@ fn StarlarkParser::parse_postfix_value(self : StarlarkParser) -> StarlarkValue? 
         step_bound = parsed_step
       }
       self.skip_value_space()
-      if not(self.consume_char(']')) {
+      if !self.consume_char(']') {
         self.push_error("expected ']' to close slice expression")
         return None
       }
       value = Slice(value, Some(first_part), end_bound, step_bound)
       continue
     } else {
-      if not(self.consume_char(']')) {
+      if !self.consume_char(']') {
         self.push_error("expected ']' to close index expression")
         return None
       }
@@ -1103,7 +1103,7 @@ fn StarlarkParser::parse_expr_call_with_name(
       self.line = saved_line
       self.column = saved_col
     }
-    if not(parsed_keyword) {
+    if !parsed_keyword {
       if seen_keyword {
         self.push_error("positional argument cannot follow keyword argument")
         self.recover_to_arg_boundary()
@@ -1235,7 +1235,7 @@ fn StarlarkParser::parse_load_path_arg(
     return false
   }
   self.skip_value_space()
-  if not(self.consume_char('=')) {
+  if !self.consume_char('=') {
     self.push_error("load() first argument must be string path or path=\"...\"")
     return false
   }
@@ -1275,7 +1275,7 @@ fn StarlarkParser::parse_load_import_arg(
     return None
   }
   self.skip_value_space()
-  if not(self.consume_char('=')) {
+  if !self.consume_char('=') {
     self.push_error("load() import must be string or alias=\"symbol\"")
     return None
   }
@@ -1302,7 +1302,7 @@ fn StarlarkParser::parse_load_call(
     return { name, args, line: start_line, column: start_col }
   }
 
-  if not(self.parse_load_path_arg(args)) {
+  if !self.parse_load_path_arg(args) {
     self.recover_to_arg_boundary()
   }
 
@@ -1315,7 +1315,7 @@ fn StarlarkParser::parse_load_call(
       self.push_error("expected ')' to close load()")
       break
     }
-    if not(self.consume_char(',')) {
+    if !self.consume_char(',') {
       self.push_error("expected ',' or ')' after load() argument")
       self.recover_to_arg_boundary()
       if self.consume_char(')') {
@@ -1435,7 +1435,7 @@ fn StarlarkParser::parse_call_with_name(
       self.line = saved_line
       self.column = saved_col
     }
-    if not(parsed_keyword) {
+    if !parsed_keyword {
       if seen_keyword {
         self.push_error("positional argument cannot follow keyword argument")
         self.recover_to_arg_boundary()
@@ -1525,7 +1525,7 @@ fn StarlarkParser::parse_assignment_with_name(
 fn line_has_non_space(text : String) -> Bool {
   let mut i = 0
   while i < text.length() {
-    if not(is_inline_space(text.unsafe_get(i))) {
+    if !is_inline_space(text.unsafe_get(i)) {
       return true
     }
     i += 1
@@ -1731,7 +1731,7 @@ fn StarlarkParser::parse_if_else_source(
 
   if keyword == "else" {
     self.skip_inline_space()
-    if not(self.consume_char(':')) {
+    if !self.consume_char(':') {
       self.push_error("expected ':' after else")
     }
     let (suite, consumed_newline) = self.parse_suite_source(
@@ -1773,7 +1773,7 @@ fn StarlarkParser::parse_if_statement(
     None => ()
   }
   self.skip_inline_space()
-  if not(self.consume_char(':')) {
+  if !self.consume_char(':') {
     self.push_error("expected ':' after if condition")
   }
   let mut needs_skip_statement_end = false
@@ -1835,7 +1835,7 @@ fn StarlarkParser::parse_for_statement(
   }
 
   self.skip_value_space()
-  if not(self.consume_keyword("in")) {
+  if !self.consume_keyword("in") {
     self.push_error("expected 'in' after for loop variable")
   }
 
@@ -1849,7 +1849,7 @@ fn StarlarkParser::parse_for_statement(
   }
 
   self.skip_inline_space()
-  if not(self.consume_char(':')) {
+  if !self.consume_char(':') {
     self.push_error("expected ':' after for iterable")
   }
   let (suite, consumed_newline) = self.parse_suite_source("for", start_col)
@@ -1885,7 +1885,7 @@ fn StarlarkParser::parse_while_statement(
     None => ()
   }
   self.skip_inline_space()
-  if not(self.consume_char(':')) {
+  if !self.consume_char(':') {
     self.push_error("expected ':' after while condition")
   }
   let (suite, consumed_newline) = self.parse_suite_source("while", start_col)
@@ -1929,14 +1929,14 @@ fn StarlarkParser::parse_def_statement(
     })
   }
   self.skip_inline_space()
-  if not(self.consume_char('(')) {
+  if !self.consume_char('(') {
     self.push_error("expected '(' after function name")
   }
   let params : Array[StarlarkValue] = []
   let defaults : Map[String, StarlarkValue] = {}
   let mut seen_default = false
   self.skip_value_space()
-  if not(self.consume_char(')')) {
+  if !self.consume_char(')') {
     while true {
       self.skip_value_space()
       match self.parse_identifier() {
@@ -2003,7 +2003,7 @@ fn StarlarkParser::parse_def_statement(
     })
   }
   self.skip_inline_space()
-  if not(self.consume_char(':')) {
+  if !self.consume_char(':') {
     self.push_error("expected ':' after def signature")
   }
   let (suite, consumed_newline) = self.parse_suite_source("def", start_col)
