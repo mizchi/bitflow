@@ -46,6 +46,10 @@ pub fn new_node(String, Array[String], required? : Bool) -> FlowNode
 
 pub fn new_task(String, String, String, Array[String], required? : Bool, srcs? : Array[String], outs? : Array[String], env? : Map[String, String], cwd? : String, trigger_mode? : String) -> FlowTask
 
+pub fn new_task_cache_plan_result(Array[FlowTaskCacheDecision], Array[String]) -> FlowTaskCachePlanResult
+
+pub fn new_task_cache_writeback_result(Map[String, String], Array[String], Array[String]) -> FlowTaskCacheWritebackResult
+
 pub fn parse(String) -> StarlarkParseResult
 
 pub fn parse_external_inputs(Array[String], Map[String, String], cli_flag? : String, env_prefix? : String) -> ExternalInputParseResult
@@ -62,9 +66,33 @@ pub fn parse_with_inputs(String, Map[String, String]) -> StarlarkParseResult
 
 pub fn plan_task_cache(FlowIr, Map[String, String], Map[String, String]) -> FlowTaskCachePlanResult
 
+pub fn plan_task_cache_from_fs(String, WorkflowAdapter, Map[String, String], Map[String, String]) -> FlowTaskCachePlanResult
+
+pub fn plan_task_cache_from_fs_with_cli_env(String, WorkflowAdapter, Map[String, String], Map[String, String], Array[String], Map[String, String], cli_flag? : String, env_prefix? : String) -> FlowTaskCachePlanResult
+
+pub fn plan_task_cache_from_fs_with_inputs(String, WorkflowAdapter, Map[String, String], Map[String, String], Map[String, String]) -> FlowTaskCachePlanResult
+
+pub fn read_flow_cache_store(String, WorkflowAdapter) -> FlowCacheStoreResult
+
+pub fn render_task_cache_plan_json(FlowTaskCachePlanResult) -> String
+
+pub fn render_task_cache_writeback_json(FlowTaskCacheWritebackResult) -> String
+
 pub fn topological_nodes(Array[FlowNode]) -> Array[FlowNode]
 
 pub fn write_execution_report(String, FlowExecutionResult, WorkflowAdapter) -> Bool
+
+pub fn write_flow_cache_store(String, Map[String, String], WorkflowAdapter) -> Bool
+
+pub fn write_task_cache_plan_json(String, FlowTaskCachePlanResult, WorkflowAdapter) -> Bool
+
+pub fn writeback_task_cache(FlowIr, Map[String, String], Map[String, String], Array[String]) -> FlowTaskCacheWritebackResult
+
+pub fn writeback_task_cache_from_fs(String, WorkflowAdapter, Map[String, String], Map[String, String], Array[String]) -> FlowTaskCacheWritebackResult
+
+pub fn writeback_task_cache_from_fs_with_cli_env(String, WorkflowAdapter, Map[String, String], Map[String, String], Array[String], Array[String], Map[String, String], cli_flag? : String, env_prefix? : String) -> FlowTaskCacheWritebackResult
+
+pub fn writeback_task_cache_from_fs_with_inputs(String, WorkflowAdapter, Map[String, String], Map[String, String], Array[String], Map[String, String]) -> FlowTaskCacheWritebackResult
 
 // Errors
 
@@ -85,6 +113,11 @@ pub fn CommandResult::ok(Self) -> Bool
 pub struct ExternalInputParseResult {
   values : Map[String, String]
   errors : Array[String]
+}
+
+pub struct FlowCacheStoreResult {
+  entries : Map[String, String]
+  issues : Array[String]
 }
 
 pub struct FlowExecutionResult {
@@ -138,6 +171,12 @@ pub struct FlowTaskCacheDecision {
 
 pub struct FlowTaskCachePlanResult {
   decisions : Array[FlowTaskCacheDecision]
+  issues : Array[String]
+}
+
+pub struct FlowTaskCacheWritebackResult {
+  entries : Map[String, String]
+  updated : Array[String]
   issues : Array[String]
 }
 

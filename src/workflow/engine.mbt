@@ -53,6 +53,14 @@ pub struct FlowTaskCachePlanResult {
 }
 
 ///|
+pub fn new_task_cache_plan_result(
+  decisions : Array[FlowTaskCacheDecision],
+  issues : Array[String],
+) -> FlowTaskCachePlanResult {
+  { decisions, issues }
+}
+
+///|
 pub struct StarlarkParseResult {
   ir : FlowIr
   errors : Array[String]
@@ -162,7 +170,7 @@ pub fn parse_external_inputs(
   let errors : Array[String] = []
 
   for key, value in env {
-    if not(key.has_prefix(env_prefix)) {
+    if !key.has_prefix(env_prefix) {
       continue
     }
     let name = String::unsafe_substring(
@@ -511,7 +519,7 @@ pub fn ir_issues(ir : FlowIr) -> Array[String] {
     if known_node_ids.get(task.node) is None {
       issues.push("task '\{task.id}' targets unknown node '\{task.node}'")
     }
-    if not(is_valid_trigger_mode(task.trigger_mode)) {
+    if !is_valid_trigger_mode(task.trigger_mode) {
       issues.push(
         "task '\{task.id}' has invalid trigger_mode '\{task.trigger_mode}'",
       )
@@ -632,7 +640,7 @@ pub fn execute_ir(
         if selected.get(dep) is None {
           continue
         }
-        if not(success.get(dep).unwrap_or(false)) {
+        if !success.get(dep).unwrap_or(false) {
           blocked_deps.push(dep)
         }
       }
@@ -684,7 +692,7 @@ pub fn execute_ir(
     }
   }
   {
-    ok: not(required_failed),
+    ok: !required_failed,
     state: if required_failed {
       "partial_failed"
     } else {

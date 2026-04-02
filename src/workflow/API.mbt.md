@@ -90,6 +90,114 @@ test {
 }
 ```
 
+## read_flow_cache_store / write_flow_cache_store
+
+Persists fingerprint entries as JSON so external runners can reuse cache state.
+
+```mbt check
+///|
+test {
+  let adapter = WorkflowAdapter::new(
+    FsAdapter::memory(),
+    CommandAdapter::none(),
+  )
+  let entries : Map[String, String] = {}
+  entries[flow_cache_key("root:build", "root")] = "fp-root"
+  inspect(
+    write_flow_cache_store("cache.json", entries, adapter),
+    content="true",
+  )
+  let loaded = read_flow_cache_store("cache.json", adapter)
+  inspect(loaded.issues.length(), content="0")
+  inspect(
+    loaded.entries.get(flow_cache_key("root:build", "root")),
+    content="Some(\"fp-root\")",
+  )
+}
+```
+
+## render_task_cache_plan_json
+
+Renders cache plan results as structured JSON with summary counts.
+
+```mbt check
+///|
+test {
+  let nodes = [new_node("root", [])]
+  let tasks = [new_task("root:build", "root", "build", [])]
+  let ir = new_ir("ci", nodes, tasks)
+  let signatures : Map[String, String] = { "root": "sig-root" }
+  let planned = plan_task_cache(ir, signatures, {})
+  let text = render_task_cache_plan_json(planned)
+  inspect(@json.valid(text), content="true")
+  inspect(text.contains("\"misses\": 1"), content="true")
+}
+```
+
+## plan_task_cache_from_fs
+
+Parses a workflow file and computes cache hit/miss decisions in one call.
+
+```mbt check
+///|
+test {
+  let src =
+    #|workflow(name="ci")
+    #|node(id="root", depends_on=[])
+    #|task(id="root:build", node="root", cmd="build", needs=[])
+    #|entrypoint(targets=["root:build"])
+  let adapter = WorkflowAdapter::new(
+    FsAdapter::memory_with({ "workflow.star": src }),
+    CommandAdapter::none(),
+  )
+  let signatures : Map[String, String] = { "root": "sig-root" }
+  let planned = plan_task_cache_from_fs("workflow.star", adapter, signatures, {})
+  inspect(planned.issues.length(), content="0")
+  inspect(planned.decisions.length(), content="1")
+}
+```
+
+## writeback_task_cache
+
+Merges fingerprints for successfully executed tasks back into the cache store.
+
+```mbt check
+///|
+test {
+  let nodes = [new_node("root", [])]
+  let tasks = [new_task("root:build", "root", "build", [])]
+  let ir = new_ir("ci", nodes, tasks)
+  let writeback = writeback_task_cache(ir, { "root": "sig-root" }, {}, [
+    "root:build",
+  ])
+  inspect(writeback.issues.length(), content="0")
+  inspect(writeback.updated.length(), content="1")
+  inspect(
+    writeback.entries.get(flow_cache_key("root:build", "root")) is Some(_),
+    content="true",
+  )
+}
+```
+
+## render_task_cache_writeback_json
+
+Renders cache writeback results as structured JSON.
+
+```mbt check
+///|
+test {
+  let ir = new_ir("ci", [new_node("root", [])], [
+    new_task("root:build", "root", "build", []),
+  ])
+  let writeback = writeback_task_cache(ir, { "root": "sig-root" }, {}, [
+    "root:build",
+  ])
+  let text = render_task_cache_writeback_json(writeback)
+  inspect(@json.valid(text), content="true")
+  inspect(text.contains("\"updated\": 1"), content="true")
+}
+```
+
 ## execute_ir
 
 Construct IR directly from MoonBit API and execute with a callback runner.

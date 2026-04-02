@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.4.0] - 2026-04-02
+
+### Added
+
+- Flow cache store read/write APIs: `read_flow_cache_store` and `write_flow_cache_store`.
+- Flow cache JSON rendering and writeback APIs, including `render_task_cache_plan_json`, `render_task_cache_writeback_json`, and `writeback_task_cache*`.
+- `bitflow cache-plan` / `bitflow cache-writeback` CLI entrypoints.
+
+### Changed
+
+- Fold example CLI tests into `src/examples/main.mbt` and remove the extra `main_test.mbt`.
+- Replace deprecated `not(...)` usage in the repo with `!expr`.
+
 ## [0.3.0] - 2026-02-12
 
 ### Added

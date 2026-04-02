@@ -153,7 +153,7 @@ fn bind_function_args(
     idx += 1
   }
   for key, value in keyword_values {
-    if not(fn_decl.params.contains(key)) {
+    if !fn_decl.params.contains(key) {
       semantic_error_with_stack(
         errors,
         line,
@@ -439,7 +439,7 @@ fn resolve_value_with_functions(
             }
           None => true
         }
-        if not(should_include) {
+        if !should_include {
           continue
         }
         match
@@ -505,7 +505,7 @@ fn resolve_value_with_functions(
             }
           None => true
         }
-        if not(should_include) {
+        if !should_include {
           continue
         }
         let resolved_key = match
@@ -880,7 +880,7 @@ fn resolve_value_with_functions(
                 resolve_in_membership(
                   resolved_left, resolved_right, line, column, errors,
                 ) {
-                Some(Bool(found)) => Some(Bool(not(found)))
+                Some(Bool(found)) => Some(Bool(!found))
                 Some(_) => None
                 None => None
               }
@@ -899,7 +899,7 @@ fn resolve_value_with_functions(
           errors,
           call_stack~,
         ) {
-        Some(resolved) => Some(Bool(not(value_truthy(resolved))))
+        Some(resolved) => Some(Bool(!value_truthy(resolved)))
         None => None
       }
     And(left, right) =>
@@ -1007,7 +1007,7 @@ fn resolve_value_with_functions(
               call_stack~,
             ) {
             Some(resolved_right) =>
-              Some(Bool(not(value_equals(resolved_left, resolved_right))))
+              Some(Bool(!value_equals(resolved_left, resolved_right)))
             None => None
           }
         None => None
@@ -1331,7 +1331,7 @@ fn validate_unknown_args(
   errors : Array[String],
 ) -> Unit {
   for arg in call.args {
-    if not(allowed.contains(arg.name)) {
+    if !allowed.contains(arg.name) {
       semantic_error(
         errors,
         arg.line,
@@ -1961,7 +1961,7 @@ fn apply_var_call(
     Some(type_arg) =>
       match expect_string("var", "type", type_arg, errors) {
         Some(type_name) => {
-          if not(var_allowed_types().contains(type_name)) {
+          if !var_allowed_types().contains(type_name) {
             semantic_error(
               errors,
               type_arg.line,
@@ -1978,7 +1978,7 @@ fn apply_var_call(
   }
   match default_arg {
     Some(arg) =>
-      if not(value_matches_type(arg.value, typ)) {
+      if !value_matches_type(arg.value, typ) {
         semantic_error(
           errors,
           arg.line,
@@ -1989,7 +1989,7 @@ fn apply_var_call(
       }
     None => ()
   }
-  if default_arg is None && not(required) {
+  if default_arg is None && !required {
     semantic_error(
       errors,
       call.line,
@@ -2064,7 +2064,7 @@ fn apply_config_call(
     )
     return
   }
-  if not(value_matches_type(value_arg.value, expected_type)) {
+  if !value_matches_type(value_arg.value, expected_type) {
     semantic_error(
       errors,
       value_arg.line,
@@ -2345,7 +2345,7 @@ fn apply_calls(
               }
             None => false
           }
-          if not(should_continue) {
+          if !should_continue {
             break
           }
           let (next_name, next_parallel, next_seen, signal) = apply_calls(
@@ -2478,7 +2478,7 @@ fn apply_calls(
           )
           invalid = true
         }
-        if not(invalid) && fn_name.length() > 0 && body_source.length() > 0 {
+        if !invalid && fn_name.length() > 0 && body_source.length() > 0 {
           functions[fn_name] = { params, defaults, body: body_source }
         }
       }
@@ -2660,7 +2660,7 @@ fn apply_calls(
           None => ()
         }
 
-        if not(invalid) {
+        if !invalid {
           nodes.push({ id, depends_on, required })
         }
       }
@@ -2785,7 +2785,7 @@ fn apply_calls(
           None => ()
         }
 
-        if not(invalid) {
+        if !invalid {
           tasks.push({
             id,
             node: node_id,

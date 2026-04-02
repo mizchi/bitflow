@@ -289,7 +289,7 @@ struct ExecutionFixtureCase {
 
 ///|
 fn strip_prefix_value(line : String, prefix : String) -> String? {
-  if not(line.has_prefix(prefix)) {
+  if !line.has_prefix(prefix) {
     return None
   }
   let raw = String::unsafe_substring(
