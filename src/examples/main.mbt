@@ -48,7 +48,7 @@ pub fn parse_analyze_cli_args(raw_args : Array[String]) -> AnalyzeCliSpec {
       errors.push("at least one changed path is required")
     }
   }
-  { show_help, workflow_path, changed_paths, errors }
+  { show_help, workflow_path, changed_paths, errors, }
 }
 
 ///|
@@ -93,7 +93,7 @@ fn run_success_with_log(task : @wf.FlowTask) -> (Bool, String) {
 
 ///|
 fn main {
-  let raw_args = @xsys.get_cli_args()
+  let raw_args = cli_args()
   let spec = parse_analyze_cli_args(raw_args)
   if spec.show_help {
     print_usage()
@@ -168,4 +168,17 @@ test "examples cli: accepts help" {
   let spec = parse_analyze_cli_args(["bitflow-examples", "--help"])
   assert_eq(spec.show_help, true)
   assert_eq(spec.errors.length(), 0)
+}
+
+///|
+#cfg(target="js")
+fn cli_args() -> Array[String] {
+  // core/env includes the JS runtime; retain the existing program-name contract.
+  @env.args()[1:].to_owned()
+}
+
+///|
+#cfg(not(target="js"))
+fn cli_args() -> Array[String] {
+  @env.args()
 }

@@ -16,7 +16,7 @@ fn builtin_arg(
   name : String,
   required? : Bool = false,
 ) -> StarlarkBuiltinArgSpec {
-  { name, required }
+  { name, required, }
 }
 
 ///|
@@ -129,8 +129,8 @@ fn builtin_specs() -> Array[StarlarkBuiltinSpec] {
       names: ["__return__"],
       args: [builtin_arg("value")],
     },
-    { canonical_name: "__break__", names: ["__break__"], args: [] },
-    { canonical_name: "__continue__", names: ["__continue__"], args: [] },
+    { canonical_name: "__break__", names: ["__break__"], args: [], },
+    { canonical_name: "__continue__", names: ["__continue__"], args: [], },
   ]
 }
 

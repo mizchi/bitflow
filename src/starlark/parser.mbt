@@ -293,7 +293,7 @@ fn StarlarkParser::parse_string(self : StarlarkParser) -> StarlarkValue? {
     return None
   }
   self.advance() |> ignore
-  let buf = StringBuilder::new()
+  let buf = StringBuilder()
   let mut escaped = false
   while self.peek() is Some(ch) {
     self.advance() |> ignore
@@ -465,7 +465,7 @@ fn StarlarkParser::parse_dict(self : StarlarkParser) -> StarlarkValue? {
     self.push_error("expected '{'")
     return None
   }
-  let items : Map[String, StarlarkValue] = {}
+  let items : Map[String, StarlarkValue] = Map([])
   self.skip_value_space()
   if self.consume_char('}') {
     return Some(Dict(items))
@@ -1224,7 +1224,7 @@ fn StarlarkParser::parse_load_path_arg(
   if self.peek() is Some(ch) && (ch == '"' || ch.to_int() == 39) {
     match self.parse_string() {
       Some(value) => {
-        args.push({ name: "path", value, line: arg_line, column: arg_col })
+        args.push({ name: "path", value, line: arg_line, column: arg_col, })
         return true
       }
       None => return false
@@ -1248,7 +1248,7 @@ fn StarlarkParser::parse_load_path_arg(
   self.skip_value_space()
   match self.parse_string() {
     Some(value) => {
-      args.push({ name: "path", value, line: arg_line, column: arg_col })
+      args.push({ name: "path", value, line: arg_line, column: arg_col, })
       true
     }
     None => false
@@ -1295,11 +1295,11 @@ fn StarlarkParser::parse_load_call(
   start_col : Int,
 ) -> StarlarkCall {
   let args : Array[StarlarkArg] = []
-  let imports : Map[String, StarlarkValue] = {}
+  let imports : Map[String, StarlarkValue] = Map([])
   self.skip_value_space()
   if self.consume_char(')') {
     self.push_error("load() requires path argument")
-    return { name, args, line: start_line, column: start_col }
+    return { name, args, line: start_line, column: start_col, }
   }
 
   if !self.parse_load_path_arg(args) {
@@ -1359,7 +1359,7 @@ fn StarlarkParser::parse_load_call(
     })
   }
 
-  { name, args, line: start_line, column: start_col }
+  { name, args, line: start_line, column: start_col, }
 }
 
 ///|
@@ -1381,7 +1381,7 @@ fn StarlarkParser::parse_call_with_name(
   let mut seen_keyword = false
   self.skip_value_space()
   if self.consume_char(')') {
-    return Some({ name, args, line: start_line, column: start_col })
+    return Some({ name, args, line: start_line, column: start_col, })
   }
   while true {
     self.skip_value_space()
@@ -1413,7 +1413,12 @@ fn StarlarkParser::parse_call_with_name(
         seen_keyword = true
         match self.parse_value() {
           Some(value) =>
-            args.push({ name: arg_name, value, line: arg_line, column: arg_col })
+            args.push({
+              name: arg_name,
+              value,
+              line: arg_line,
+              column: arg_col,
+            })
           None => {
             self.recover_to_arg_boundary()
             if self.consume_char(')') {
@@ -1451,7 +1456,7 @@ fn StarlarkParser::parse_call_with_name(
         Some(value) => {
           let pos_name = "$pos\{positional_index}"
           positional_index += 1
-          args.push({ name: pos_name, value, line: arg_line, column: arg_col })
+          args.push({ name: pos_name, value, line: arg_line, column: arg_col, })
         }
         None => {
           self.recover_to_arg_boundary()
@@ -1497,7 +1502,7 @@ fn StarlarkParser::parse_call_with_name(
     }
     break
   }
-  Some({ name, args, line: start_line, column: start_col })
+  Some({ name, args, line: start_line, column: start_col, })
 }
 
 ///|
@@ -1508,17 +1513,17 @@ fn StarlarkParser::parse_assignment_with_name(
   start_col : Int,
 ) -> StarlarkCall {
   let args : Array[StarlarkArg] = [
-    { name: "name", value: Str(name), line: start_line, column: start_col },
+    { name: "name", value: Str(name), line: start_line, column: start_col, },
   ]
   self.skip_value_space()
   let value_line = self.line
   let value_col = self.column
   match self.parse_value() {
     Some(value) =>
-      args.push({ name: "value", value, line: value_line, column: value_col })
+      args.push({ name: "value", value, line: value_line, column: value_col, })
     None => ()
   }
-  { name: "__assign__", args, line: start_line, column: start_col }
+  { name: "__assign__", args, line: start_line, column: start_col, }
 }
 
 ///|
@@ -1769,7 +1774,7 @@ fn StarlarkParser::parse_if_statement(
   let cond_col = self.column
   match self.parse_value() {
     Some(value) =>
-      args.push({ name: "cond", value, line: cond_line, column: cond_col })
+      args.push({ name: "cond", value, line: cond_line, column: cond_col, })
     None => ()
   }
   self.skip_inline_space()
@@ -1810,7 +1815,7 @@ fn StarlarkParser::parse_if_statement(
   if needs_skip_statement_end {
     self.skip_statement_end_once = true
   }
-  { name: "__if__", args, line: start_line, column: start_col }
+  { name: "__if__", args, line: start_line, column: start_col, }
 }
 
 ///|
@@ -1844,7 +1849,7 @@ fn StarlarkParser::parse_for_statement(
   let iter_col = self.column
   match self.parse_value() {
     Some(value) =>
-      args.push({ name: "iter", value, line: iter_line, column: iter_col })
+      args.push({ name: "iter", value, line: iter_line, column: iter_col, })
     None => ()
   }
 
@@ -1866,7 +1871,7 @@ fn StarlarkParser::parse_for_statement(
       })
     None => ()
   }
-  { name: "__for__", args, line: start_line, column: start_col }
+  { name: "__for__", args, line: start_line, column: start_col, }
 }
 
 ///|
@@ -1881,7 +1886,7 @@ fn StarlarkParser::parse_while_statement(
   let cond_col = self.column
   match self.parse_value() {
     Some(value) =>
-      args.push({ name: "cond", value, line: cond_line, column: cond_col })
+      args.push({ name: "cond", value, line: cond_line, column: cond_col, })
     None => ()
   }
   self.skip_inline_space()
@@ -1902,7 +1907,7 @@ fn StarlarkParser::parse_while_statement(
       })
     None => ()
   }
-  { name: "__while__", args, line: start_line, column: start_col }
+  { name: "__while__", args, line: start_line, column: start_col, }
 }
 
 ///|
@@ -1933,7 +1938,7 @@ fn StarlarkParser::parse_def_statement(
     self.push_error("expected '(' after function name")
   }
   let params : Array[StarlarkValue] = []
-  let defaults : Map[String, StarlarkValue] = {}
+  let defaults : Map[String, StarlarkValue] = Map([])
   let mut seen_default = false
   self.skip_value_space()
   if !self.consume_char(')') {
@@ -2020,7 +2025,7 @@ fn StarlarkParser::parse_def_statement(
       })
     None => ()
   }
-  { name: "__def__", args, line: start_line, column: start_col }
+  { name: "__def__", args, line: start_line, column: start_col, }
 }
 
 ///|
@@ -2043,11 +2048,11 @@ fn StarlarkParser::parse_return_statement(
     let value_col = self.column
     match self.parse_value() {
       Some(value) =>
-        args.push({ name: "value", value, line: value_line, column: value_col })
+        args.push({ name: "value", value, line: value_line, column: value_col, })
       None => ()
     }
   }
-  { name: "__return__", args, line: start_line, column: start_col }
+  { name: "__return__", args, line: start_line, column: start_col, }
 }
 
 ///|
@@ -2056,7 +2061,7 @@ fn parse_control_statement(
   start_line : Int,
   start_col : Int,
 ) -> StarlarkCall {
-  { name, args: [], line: start_line, column: start_col }
+  { name, args: [], line: start_line, column: start_col, }
 }
 
 ///|
@@ -2148,5 +2153,5 @@ fn parse_syntax(text : String) -> StarlarkSyntaxResult {
     }
     parser.consume_statement_end()
   }
-  { calls, errors: parser.errors }
+  { calls, errors: parser.errors, }
 }

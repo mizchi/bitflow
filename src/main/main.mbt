@@ -202,7 +202,7 @@ fn print_parse_errors(errors : Array[String]) -> Unit {
 
 ///|
 fn main {
-  let raw_args = @xsys.get_cli_args()
+  let raw_args = cli_args()
   let spec = parse_main_cli_args(raw_args)
   if spec.show_help {
     print_usage()
@@ -229,7 +229,7 @@ fn main {
         spec.signatures,
         cache_store.entries,
         drop_program_name(raw_args),
-        @xsys.get_env_vars(),
+        @env.get_env_vars(),
       )
     }
     println(@wf.render_task_cache_plan_json(planned))
@@ -251,7 +251,7 @@ fn main {
         cache_store.entries,
         spec.success_task_ids,
         drop_program_name(raw_args),
-        @xsys.get_env_vars(),
+        @env.get_env_vars(),
       )
     }
     let persisted = if writeback.issues.length() == 0 {
@@ -282,7 +282,7 @@ fn main {
     spec.workflow_path,
     adapter,
     drop_program_name(raw_args),
-    @xsys.get_env_vars(),
+    @env.get_env_vars(),
   )
   if parsed.errors.length() > 0 {
     print_parse_errors(parsed.errors)
@@ -380,4 +380,17 @@ test "main cli: cache-writeback validates success option arity" {
   ])
   let text = spec.errors.join("\n")
   assert_true(text.contains("option --success expects task id"))
+}
+
+///|
+#cfg(target="js")
+fn cli_args() -> Array[String] {
+  // core/env includes the JS runtime; retain the existing program-name contract.
+  @env.args()[1:].to_owned()
+}
+
+///|
+#cfg(not(target="js"))
+fn cli_args() -> Array[String] {
+  @env.args()
 }

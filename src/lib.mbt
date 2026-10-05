@@ -3,13 +3,15 @@
 ///
 /// ```mbt check
 /// test {
-///   inspect(fib(10), content="89")
+///   inspect(@bitflow.fib(10), content="89")
 /// }
 /// ```
 pub fn fib(n : Int) -> Int64 {
-  loop (n, 0L, 1L) {
-    (0, _, b) => b
-    (i, a, b) => continue (i - 1, b, a + b)
+  for i = n, a = 0L, b = 1L {
+    if i == 0 {
+      break b
+    }
+    continue i - 1, b, a + b
   }
 }
 

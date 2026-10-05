@@ -1,4 +1,8 @@
 import {
-  "mizchi/bitflow/starlark" @starlark,
-  "moonbitlang/core/json" @json,
+  "mizchi/bitflow/starlark",
+  "moonbitlang/core/json",
 }
+
+import {
+  "moonbitlang/core/debug",
+} for "test"

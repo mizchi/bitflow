@@ -206,4 +206,3 @@ pub fn WorkflowAdapter::none() -> Self
 // Type aliases
 
 // Traits
-

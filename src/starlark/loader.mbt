@@ -12,7 +12,7 @@ fn path_normalize(path : String) -> String {
   let is_abs = path.has_prefix("/")
   let parts : Array[String] = []
   for view in path.split("/") {
-    let part = view.to_string()
+    let part = view.to_owned()
     if part.length() == 0 || part == "." {
       continue
     }
@@ -145,7 +145,7 @@ fn def_alias_call(base : StarlarkCall, local_name : String) -> StarlarkCall {
       column: base.column,
     })
   }
-  { name: base.name, args, line: base.line, column: base.column }
+  { name: base.name, args, line: base.line, column: base.column, }
 }
 
 ///|
@@ -158,8 +158,8 @@ fn value_alias_call(
   {
     name: "__assign__",
     args: [
-      { name: "name", value: Str(local_name), line, column },
-      { name: "value", value: Ref(symbol_name), line, column },
+      { name: "name", value: Str(local_name), line, column, },
+      { name: "value", value: Ref(symbol_name), line, column, },
     ],
     line,
     column,
@@ -236,7 +236,7 @@ fn load_spec_from_call(
       return None
     }
   }
-  let imports : Map[String, String] = {}
+  let imports : Map[String, String] = Map([])
   match args.get("imports") {
     Some(arg) =>
       match arg.value {
@@ -263,7 +263,7 @@ fn load_spec_from_call(
       }
     None => ()
   }
-  Some({ path, imports })
+  Some({ path, imports, })
 }
 
 ///|
@@ -297,8 +297,8 @@ fn collect_calls_from_fs(
   match read_text(normalized) {
     Some(text) => {
       let syntax = parse_syntax(text)
-      let function_defs : Map[String, StarlarkCall] = {}
-      let values : Map[String, Bool] = {}
+      let function_defs : Map[String, StarlarkCall] = Map([])
+      let values : Map[String, Bool] = Map([])
       for err in syntax.errors {
         errors.push(normalized + ": " + err)
       }
@@ -340,7 +340,7 @@ fn collect_calls_from_fs(
           append_exported_symbol(call, function_defs, values)
         }
       }
-      module_exports_by_path[normalized] = { function_defs, values }
+      module_exports_by_path[normalized] = { function_defs, values, }
     }
     None => errors.push("failed to read loaded file: " + normalized)
   }
@@ -383,9 +383,9 @@ fn parse_from_fs_with_inputs_impl(
 
   let calls : Array[StarlarkCall] = []
   let load_errors : Array[String] = []
-  let visiting : Map[String, Bool] = {}
-  let loaded : Map[String, Bool] = {}
-  let module_exports_by_path : Map[String, LoadModuleExports] = {}
+  let visiting : Map[String, Bool] = Map([])
+  let loaded : Map[String, Bool] = Map([])
+  let module_exports_by_path : Map[String, LoadModuleExports] = Map([])
   let stack : Array[String] = []
   collect_calls_from_fs(
     normalized, workspace_root, read_text, calls, load_errors, visiting, loaded,

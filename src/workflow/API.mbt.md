@@ -7,8 +7,11 @@ Returns nodes in dependency-first order.
 ```mbt check
 ///|
 test {
-  let nodes = [new_node("root", []), new_node("dep", ["root"])]
-  let ordered = topological_nodes(nodes)
+  let nodes = [
+    @workflow.new_node("root", []),
+    @workflow.new_node("dep", ["root"]),
+  ]
+  let ordered = @workflow.topological_nodes(nodes)
   inspect(ordered.length(), content="2")
   inspect(ordered[0].id, content="root")
 }
@@ -21,8 +24,8 @@ Reports graph issues such as unknown dependencies and cycles.
 ```mbt check
 ///|
 test {
-  let nodes = [new_node("a", ["missing"])]
-  let issues = graph_issues(nodes)
+  let nodes = [@workflow.new_node("a", ["missing"])]
+  let issues = @workflow.graph_issues(nodes)
   inspect(issues.length() > 0, content="true")
 }
 ```
@@ -34,9 +37,9 @@ Builds a deterministic fingerprint string from task, command, node, and signatur
 ```mbt check
 ///|
 test {
-  let node = new_node("pkg", ["root"])
+  let node = @workflow.new_node("pkg", ["root"])
   let signatures : Map[String, String] = { "pkg": "pkg-1", "root": "root-1" }
-  let fp = flow_fingerprint("test", "just test", node, signatures)
+  let fp = @workflow.flow_fingerprint("test", "just test", node, signatures)
   inspect(fp.contains("task=test"), content="true")
 }
 ```
@@ -49,8 +52,8 @@ Builds a deterministic fingerprint for a concrete `FlowTask` including
 ```mbt check
 ///|
 test {
-  let node = new_node("pkg", [])
-  let task = new_task(
+  let node = @workflow.new_node("pkg", [])
+  let task = @workflow.new_task(
     "pkg:build",
     "pkg",
     "pnpm build",
@@ -62,7 +65,7 @@ test {
     trigger_mode="auto",
   )
   let signatures : Map[String, String] = { "pkg": "pkg-1", "dep:a": "dep-1" }
-  let fp = flow_task_fingerprint(task, node, signatures)
+  let fp = @workflow.flow_task_fingerprint(task, node, signatures)
   inspect(fp.contains("task=pkg:build"), content="true")
   inspect(fp.contains("out:packages/pkg/dist/**"), content="true")
 }
@@ -76,14 +79,14 @@ entries.
 ```mbt check
 ///|
 test {
-  let nodes = [new_node("root", [])]
-  let tasks = [new_task("root:build", "root", "build", [])]
-  let ir = new_ir("ci", nodes, tasks)
+  let nodes = [@workflow.new_node("root", [])]
+  let tasks = [@workflow.new_task("root:build", "root", "build", [])]
+  let ir = @workflow.new_ir("ci", nodes, tasks)
   let signatures : Map[String, String] = { "root": "sig-root" }
-  let fp = flow_task_fingerprint(tasks[0], nodes[0], signatures)
-  let cache : Map[String, String] = {}
-  cache[flow_cache_key("root:build", "root")] = fp
-  let planned = plan_task_cache(ir, signatures, cache)
+  let fp = @workflow.flow_task_fingerprint(tasks[0], nodes[0], signatures)
+  let cache : Map[String, String] = Map([])
+  cache[@workflow.flow_cache_key("root:build", "root")] = fp
+  let planned = @workflow.plan_task_cache(ir, signatures, cache)
   inspect(planned.issues.length(), content="0")
   inspect(planned.decisions.length(), content="1")
   inspect(planned.decisions[0].hit, content="true")
@@ -97,20 +100,20 @@ Persists fingerprint entries as JSON so external runners can reuse cache state.
 ```mbt check
 ///|
 test {
-  let adapter = WorkflowAdapter::new(
-    FsAdapter::memory(),
-    CommandAdapter::none(),
+  let adapter = @workflow.WorkflowAdapter::new(
+    @workflow.FsAdapter::memory(),
+    @workflow.CommandAdapter::none(),
   )
-  let entries : Map[String, String] = {}
-  entries[flow_cache_key("root:build", "root")] = "fp-root"
+  let entries : Map[String, String] = Map([])
+  entries[@workflow.flow_cache_key("root:build", "root")] = "fp-root"
   inspect(
-    write_flow_cache_store("cache.json", entries, adapter),
+    @workflow.write_flow_cache_store("cache.json", entries, adapter),
     content="true",
   )
-  let loaded = read_flow_cache_store("cache.json", adapter)
+  let loaded = @workflow.read_flow_cache_store("cache.json", adapter)
   inspect(loaded.issues.length(), content="0")
-  inspect(
-    loaded.entries.get(flow_cache_key("root:build", "root")),
+  @debug.debug_inspect(
+    loaded.entries.get(@workflow.flow_cache_key("root:build", "root")),
     content="Some(\"fp-root\")",
   )
 }
@@ -123,12 +126,12 @@ Renders cache plan results as structured JSON with summary counts.
 ```mbt check
 ///|
 test {
-  let nodes = [new_node("root", [])]
-  let tasks = [new_task("root:build", "root", "build", [])]
-  let ir = new_ir("ci", nodes, tasks)
+  let nodes = [@workflow.new_node("root", [])]
+  let tasks = [@workflow.new_task("root:build", "root", "build", [])]
+  let ir = @workflow.new_ir("ci", nodes, tasks)
   let signatures : Map[String, String] = { "root": "sig-root" }
-  let planned = plan_task_cache(ir, signatures, {})
-  let text = render_task_cache_plan_json(planned)
+  let planned = @workflow.plan_task_cache(ir, signatures, {})
+  let text = @workflow.render_task_cache_plan_json(planned)
   inspect(@json.valid(text), content="true")
   inspect(text.contains("\"misses\": 1"), content="true")
 }
@@ -146,12 +149,17 @@ test {
     #|node(id="root", depends_on=[])
     #|task(id="root:build", node="root", cmd="build", needs=[])
     #|entrypoint(targets=["root:build"])
-  let adapter = WorkflowAdapter::new(
-    FsAdapter::memory_with({ "workflow.star": src }),
-    CommandAdapter::none(),
+  let adapter = @workflow.WorkflowAdapter::new(
+    @workflow.FsAdapter::memory_with({ "workflow.star": src }),
+    @workflow.CommandAdapter::none(),
   )
   let signatures : Map[String, String] = { "root": "sig-root" }
-  let planned = plan_task_cache_from_fs("workflow.star", adapter, signatures, {})
+  let planned = @workflow.plan_task_cache_from_fs(
+    "workflow.star",
+    adapter,
+    signatures,
+    {},
+  )
   inspect(planned.issues.length(), content="0")
   inspect(planned.decisions.length(), content="1")
 }
@@ -164,16 +172,20 @@ Merges fingerprints for successfully executed tasks back into the cache store.
 ```mbt check
 ///|
 test {
-  let nodes = [new_node("root", [])]
-  let tasks = [new_task("root:build", "root", "build", [])]
-  let ir = new_ir("ci", nodes, tasks)
-  let writeback = writeback_task_cache(ir, { "root": "sig-root" }, {}, [
-    "root:build",
-  ])
+  let nodes = [@workflow.new_node("root", [])]
+  let tasks = [@workflow.new_task("root:build", "root", "build", [])]
+  let ir = @workflow.new_ir("ci", nodes, tasks)
+  let writeback = @workflow.writeback_task_cache(
+    ir,
+    { "root": "sig-root" },
+    {},
+    ["root:build"],
+  )
   inspect(writeback.issues.length(), content="0")
   inspect(writeback.updated.length(), content="1")
   inspect(
-    writeback.entries.get(flow_cache_key("root:build", "root")) is Some(_),
+    writeback.entries.get(@workflow.flow_cache_key("root:build", "root"))
+    is Some(_),
     content="true",
   )
 }
@@ -186,13 +198,16 @@ Renders cache writeback results as structured JSON.
 ```mbt check
 ///|
 test {
-  let ir = new_ir("ci", [new_node("root", [])], [
-    new_task("root:build", "root", "build", []),
+  let ir = @workflow.new_ir("ci", [@workflow.new_node("root", [])], [
+    @workflow.new_task("root:build", "root", "build", []),
   ])
-  let writeback = writeback_task_cache(ir, { "root": "sig-root" }, {}, [
-    "root:build",
-  ])
-  let text = render_task_cache_writeback_json(writeback)
+  let writeback = @workflow.writeback_task_cache(
+    ir,
+    { "root": "sig-root" },
+    {},
+    ["root:build"],
+  )
+  let text = @workflow.render_task_cache_writeback_json(writeback)
   inspect(@json.valid(text), content="true")
   inspect(text.contains("\"updated\": 1"), content="true")
 }
@@ -205,11 +220,11 @@ Construct IR directly from MoonBit API and execute with a callback runner.
 ```mbt check
 ///|
 test {
-  let nodes = [new_node("root", [])]
-  let tasks = [new_task("root:build", "root", "build", [])]
-  let ir = new_ir("ci", nodes, tasks)
-  let run_task = fn(_task : FlowTask) { (true, "") }
-  let result = execute_ir(ir, run_task)
+  let nodes = [@workflow.new_node("root", [])]
+  let tasks = [@workflow.new_task("root:build", "root", "build", [])]
+  let ir = @workflow.new_ir("ci", nodes, tasks)
+  let run_task = fn(_task : @workflow.FlowTask) { (true, "") }
+  let result = @workflow.execute_ir(ir, run_task)
   inspect(result.ok, content="true")
   inspect(result.steps[0].status, content="success")
 }
@@ -227,7 +242,7 @@ test {
     #|node(id="root", depends_on=[])
     #|task(id="root:build", node="root", cmd="build", needs=[])
     #|entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   inspect(parsed.errors.length(), content="0")
   inspect(parsed.ir.tasks.length(), content="1")
 }
@@ -256,11 +271,14 @@ test {
   let common =
     #|node(id="dep", depends_on=["root"])
     #|task(id="root:test", node="dep", cmd="test", needs=["root:build"])
-  let adapter = WorkflowAdapter::new(
-    FsAdapter::memory_with({ "workflow.star": root, "defs/common.star": common }),
-    CommandAdapter::none(),
+  let adapter = @workflow.WorkflowAdapter::new(
+    @workflow.FsAdapter::memory_with({
+      "workflow.star": root,
+      "defs/common.star": common,
+    }),
+    @workflow.CommandAdapter::none(),
   )
-  let parsed = parse_from_fs("workflow.star", adapter)
+  let parsed = @workflow.parse_from_fs("workflow.star", adapter)
   inspect(parsed.errors.length(), content="0")
   inspect(parsed.ir.tasks.length(), content="2")
 }
@@ -280,18 +298,21 @@ test {
     #|node(id="root", depends_on=[])
     #|task(id="root:build", node="root", cmd="build", needs=[])
     #|entrypoint(targets=["root:build"])
-  let adapter = WorkflowAdapter::new(
-    FsAdapter::memory_with({ "workflow.star": src }),
-    CommandAdapter::new(fn(
+  let adapter = @workflow.WorkflowAdapter::new(
+    @workflow.FsAdapter::memory_with({ "workflow.star": src }),
+    @workflow.CommandAdapter::new(fn(
       _cmd : String,
       _cwd : String?,
       _env : Map[String, String],
     ) {
-      command_success(stdout="ok")
+      @workflow.command_success(stdout="ok")
     }),
   )
-  let result = execute_from_fs("workflow.star", adapter)
+  let result = @workflow.execute_from_fs("workflow.star", adapter)
   inspect(result.ok, content="true")
-  inspect(write_execution_report("report.txt", result, adapter), content="true")
+  inspect(
+    @workflow.write_execution_report("report.txt", result, adapter),
+    content="true",
+  )
 }
 ```

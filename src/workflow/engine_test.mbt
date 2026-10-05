@@ -1,11 +1,13 @@
 ///|
-fn run_ok(_task : FlowTask) -> (Bool, String) {
+fn run_ok(_task : @workflow.FlowTask) -> (Bool, String) {
   (true, "")
 }
 
 ///|
-fn cache_hit_map(result : FlowTaskCachePlanResult) -> Map[String, Bool] {
-  let hits : Map[String, Bool] = {}
+fn cache_hit_map(
+  result : @workflow.FlowTaskCachePlanResult,
+) -> Map[String, Bool] {
+  let hits : Map[String, Bool] = Map([])
   for decision in result.decisions {
     hits[decision.id] = decision.hit
   }
@@ -24,7 +26,7 @@ fn task_scenario_success(
   task_id : String,
   message? : String = "",
 ) -> TaskScenario {
-  { task_id, ok: true, message }
+  { task_id, ok: true, message, }
 }
 
 ///|
@@ -32,12 +34,12 @@ fn task_scenario_failure(
   task_id : String,
   message? : String = "task failed",
 ) -> TaskScenario {
-  { task_id, ok: false, message }
+  { task_id, ok: false, message, }
 }
 
 ///|
 struct MockTaskRunner {
-  run : (FlowTask) -> (Bool, String)
+  run : (@workflow.FlowTask) -> (Bool, String)
   called_ids : () -> Array[String]
 }
 
@@ -47,13 +49,13 @@ fn mock_task_runner(
   default_ok? : Bool = true,
   default_message? : String = "",
 ) -> MockTaskRunner {
-  let outcomes : Map[String, (Bool, String)] = {}
+  let outcomes : Map[String, (Bool, String)] = Map([])
   for scenario in scenarios {
     outcomes[scenario.task_id] = (scenario.ok, scenario.message)
   }
   let called : Array[String] = []
   {
-    run: fn(task : FlowTask) {
+    run: fn(task : @workflow.FlowTask) {
       called.push(task.id)
       match outcomes.get(task.id) {
         Some(result) => result
@@ -76,13 +78,16 @@ test "workflow engine: mock runner can describe task outcomes and execution orde
     task_scenario_success("root:build"),
     task_scenario_failure("dep:test", message="dep failed"),
   ])
-  let nodes = [new_node("root", []), new_node("dep", ["root"])]
-  let tasks = [
-    new_task("root:build", "root", "build", []),
-    new_task("dep:test", "dep", "test", ["root:build"]),
+  let nodes = [
+    @workflow.new_node("root", []),
+    @workflow.new_node("dep", ["root"]),
   ]
-  let ir = new_ir("ci", nodes, tasks, entry_targets=["dep:test"])
-  let result = execute_ir(ir, runner.run)
+  let tasks = [
+    @workflow.new_task("root:build", "root", "build", []),
+    @workflow.new_task("dep:test", "dep", "test", ["root:build"]),
+  ]
+  let ir = @workflow.new_ir("ci", nodes, tasks, entry_targets=["dep:test"])
+  let result = @workflow.execute_ir(ir, runner.run)
   assert_eq(result.ok, false)
   assert_eq(result.steps.length(), 2)
   assert_eq(result.steps[0].status, "success")
@@ -156,7 +161,7 @@ fn parse_chunk_source_line(line : String) -> (String, String?) {
 fn parse_go_chunked_cases(text : String) -> Array[(String, String?)] {
   let lines : Array[String] = []
   for view in text.split("\n") {
-    lines.push(view.to_string())
+    lines.push(view.to_owned())
   }
   // Sentinel delimiter to flush last case.
   lines.push("---")
@@ -328,7 +333,7 @@ fn parse_csv_values(raw : String) -> Array[String] {
   }
   let values : Array[String] = []
   for view in text.split(",") {
-    let item = trim_ascii_space(view.to_string())
+    let item = trim_ascii_space(view.to_owned())
     if item.length() > 0 {
       values.push(item)
     }
@@ -405,7 +410,7 @@ fn parse_scenario_spec(raw : String) -> TaskScenario? {
 fn parse_execution_fixture_cases(text : String) -> Array[ExecutionFixtureCase] {
   let lines : Array[String] = []
   for view in text.split("\n") {
-    lines.push(view.to_string())
+    lines.push(view.to_owned())
   }
   lines.push("---")
 
@@ -1099,19 +1104,22 @@ fn expected_invalid_execution_fixture_source_marker() -> String {
 
 ///|
 test "workflow engine: direct API executes topological tasks" {
-  let nodes = [new_node("root", []), new_node("dep", ["root"])]
-  let tasks = [
-    new_task("root:build", "root", "build", []),
-    new_task("dep:test", "dep", "test", ["root:build"]),
+  let nodes = [
+    @workflow.new_node("root", []),
+    @workflow.new_node("dep", ["root"]),
   ]
-  let ir = new_ir(
+  let tasks = [
+    @workflow.new_task("root:build", "root", "build", []),
+    @workflow.new_task("dep:test", "dep", "test", ["root:build"]),
+  ]
+  let ir = @workflow.new_ir(
     "ci",
     nodes,
     tasks,
     entry_targets=["dep:test"],
     max_parallel=2,
   )
-  let result = execute_ir(ir, run_ok)
+  let result = @workflow.execute_ir(ir, run_ok)
   assert_eq(result.ok, true)
   assert_eq(result.state, "completed")
   assert_eq(result.order.length(), 2)
@@ -1121,9 +1129,9 @@ test "workflow engine: direct API executes topological tasks" {
 
 ///|
 test "workflow engine: task fingerprint includes execution metadata" {
-  let node = new_node("root", [])
+  let node = @workflow.new_node("root", [])
   let signatures : Map[String, String] = { "root": "sig-root" }
-  let task_a = new_task(
+  let task_a = @workflow.new_task(
     "root:build",
     "root",
     "build",
@@ -1135,7 +1143,7 @@ test "workflow engine: task fingerprint includes execution metadata" {
     cwd="packages/root",
     trigger_mode="auto",
   )
-  let task_b = new_task(
+  let task_b = @workflow.new_task(
     "root:build",
     "root",
     "build",
@@ -1147,10 +1155,10 @@ test "workflow engine: task fingerprint includes execution metadata" {
     cwd="packages/root",
     trigger_mode="auto",
   )
-  let fp_a = flow_task_fingerprint(task_a, node, signatures)
-  let fp_b = flow_task_fingerprint(task_b, node, signatures)
+  let fp_a = @workflow.flow_task_fingerprint(task_a, node, signatures)
+  let fp_b = @workflow.flow_task_fingerprint(task_b, node, signatures)
   assert_eq(fp_a, fp_b)
-  let task_changed = new_task(
+  let task_changed = @workflow.new_task(
     "root:build",
     "root",
     "build",
@@ -1162,26 +1170,31 @@ test "workflow engine: task fingerprint includes execution metadata" {
     cwd="packages/root",
     trigger_mode="auto",
   )
-  let fp_changed = flow_task_fingerprint(task_changed, node, signatures)
+  let fp_changed = @workflow.flow_task_fingerprint(
+    task_changed, node, signatures,
+  )
   assert_true(fp_changed != fp_a)
 }
 
 ///|
 test "workflow engine: task cache plan reports hit and miss" {
-  let nodes = [new_node("root", []), new_node("dep", ["root"])]
-  let tasks = [
-    new_task("root:build", "root", "build", []),
-    new_task("dep:test", "dep", "test", ["root:build"]),
+  let nodes = [
+    @workflow.new_node("root", []),
+    @workflow.new_node("dep", ["root"]),
   ]
-  let ir = new_ir("ci", nodes, tasks, entry_targets=["dep:test"])
+  let tasks = [
+    @workflow.new_task("root:build", "root", "build", []),
+    @workflow.new_task("dep:test", "dep", "test", ["root:build"]),
+  ]
+  let ir = @workflow.new_ir("ci", nodes, tasks, entry_targets=["dep:test"])
   let signatures : Map[String, String] = {
     "root": "sig-root",
     "dep": "sig-dep",
   }
-  let build_fp = flow_task_fingerprint(tasks[0], nodes[0], signatures)
-  let cache : Map[String, String] = {}
-  cache[flow_cache_key("root:build", "root")] = build_fp
-  let planned = plan_task_cache(ir, signatures, cache)
+  let build_fp = @workflow.flow_task_fingerprint(tasks[0], nodes[0], signatures)
+  let cache : Map[String, String] = Map([])
+  cache[@workflow.flow_cache_key("root:build", "root")] = build_fp
+  let planned = @workflow.plan_task_cache(ir, signatures, cache)
   assert_eq(planned.issues.length(), 0)
   assert_eq(planned.decisions.length(), 2)
   let hits = cache_hit_map(planned)
@@ -1191,10 +1204,10 @@ test "workflow engine: task cache plan reports hit and miss" {
 
 ///|
 test "workflow engine: task cache plan is invalid when ir has issues" {
-  let ir = new_ir("ci", [new_node("root", ["missing"])], [
-    new_task("root:build", "root", "build", []),
+  let ir = @workflow.new_ir("ci", [@workflow.new_node("root", ["missing"])], [
+    @workflow.new_task("root:build", "root", "build", []),
   ])
-  let planned = plan_task_cache(ir, { "root": "sig-root" }, {})
+  let planned = @workflow.plan_task_cache(ir, { "root": "sig-root" }, {})
   assert_eq(planned.decisions.length(), 0)
   assert_true(planned.issues.length() > 0)
 }
@@ -1205,17 +1218,17 @@ test "workflow engine: required failure blocks dependent task" {
     task_scenario_failure("dep:test", message="dep failed"),
   ])
   let nodes = [
-    new_node("root", []),
-    new_node("dep", ["root"]),
-    new_node("leaf", ["dep"]),
+    @workflow.new_node("root", []),
+    @workflow.new_node("dep", ["root"]),
+    @workflow.new_node("leaf", ["dep"]),
   ]
   let tasks = [
-    new_task("root:build", "root", "build", []),
-    new_task("dep:test", "dep", "test", ["root:build"]),
-    new_task("leaf:deploy", "leaf", "deploy", ["dep:test"]),
+    @workflow.new_task("root:build", "root", "build", []),
+    @workflow.new_task("dep:test", "dep", "test", ["root:build"]),
+    @workflow.new_task("leaf:deploy", "leaf", "deploy", ["dep:test"]),
   ]
-  let ir = new_ir("ci", nodes, tasks)
-  let result = execute_ir(ir, runner.run)
+  let ir = @workflow.new_ir("ci", nodes, tasks)
+  let result = @workflow.execute_ir(ir, runner.run)
   assert_eq(result.ok, false)
   assert_eq(result.state, "partial_failed")
   let text = result.steps.map(step => step.id + ":" + step.status).join("\n")
@@ -1226,17 +1239,17 @@ test "workflow engine: required failure blocks dependent task" {
 ///|
 test "workflow engine: entry target executes only transitive dependencies" {
   let nodes = [
-    new_node("root", []),
-    new_node("dep", ["root"]),
-    new_node("extra", []),
+    @workflow.new_node("root", []),
+    @workflow.new_node("dep", ["root"]),
+    @workflow.new_node("extra", []),
   ]
   let tasks = [
-    new_task("root:build", "root", "build", []),
-    new_task("dep:test", "dep", "test", ["root:build"]),
-    new_task("extra:lint", "extra", "lint", []),
+    @workflow.new_task("root:build", "root", "build", []),
+    @workflow.new_task("dep:test", "dep", "test", ["root:build"]),
+    @workflow.new_task("extra:lint", "extra", "lint", []),
   ]
-  let ir = new_ir("ci", nodes, tasks, entry_targets=["dep:test"])
-  let result = execute_ir(ir, run_ok)
+  let ir = @workflow.new_ir("ci", nodes, tasks, entry_targets=["dep:test"])
+  let result = @workflow.execute_ir(ir, run_ok)
   assert_eq(result.ok, true)
   assert_eq(result.order.length(), 2)
   assert_true(result.order.contains("root:build"))
@@ -1249,13 +1262,16 @@ test "workflow engine: optional task failure keeps workflow completed" {
   let runner = mock_task_runner([
     task_scenario_failure("root:lint", message="lint failed"),
   ])
-  let nodes = [new_node("root", []), new_node("dep", ["root"])]
-  let tasks = [
-    new_task("root:lint", "root", "lint", [], required=false),
-    new_task("dep:test", "dep", "test", [], required=true),
+  let nodes = [
+    @workflow.new_node("root", []),
+    @workflow.new_node("dep", ["root"]),
   ]
-  let ir = new_ir("ci", nodes, tasks)
-  let result = execute_ir(ir, runner.run)
+  let tasks = [
+    @workflow.new_task("root:lint", "root", "lint", [], required=false),
+    @workflow.new_task("dep:test", "dep", "test", [], required=true),
+  ]
+  let ir = @workflow.new_ir("ci", nodes, tasks)
+  let result = @workflow.execute_ir(ir, runner.run)
   assert_eq(result.ok, true)
   assert_eq(result.state, "completed")
   let text = result.steps.map(step => step.id + ":" + step.status).join("\n")
@@ -1265,10 +1281,12 @@ test "workflow engine: optional task failure keeps workflow completed" {
 
 ///|
 test "workflow engine: execute_ir returns invalid when ir has issues" {
-  let nodes = [new_node("root", ["missing"])]
-  let tasks = [new_task("root:test", "unknown", "test", ["missing:task"])]
-  let ir = new_ir("ci", nodes, tasks, entry_targets=["missing:target"])
-  let result = execute_ir(ir, run_ok)
+  let nodes = [@workflow.new_node("root", ["missing"])]
+  let tasks = [
+    @workflow.new_task("root:test", "unknown", "test", ["missing:task"]),
+  ]
+  let ir = @workflow.new_ir("ci", nodes, tasks, entry_targets=["missing:target"])
+  let result = @workflow.execute_ir(ir, run_ok)
   assert_eq(result.ok, false)
   assert_eq(result.state, "invalid")
   assert_eq(result.steps.length(), 0)
@@ -1284,13 +1302,13 @@ test "workflow engine: execute_ir returns invalid when ir has issues" {
 
 ///|
 test "workflow engine: ir issues reports non-positive max_parallel" {
-  let ir = new_ir(
+  let ir = @workflow.new_ir(
     "ci",
-    [new_node("root", [])],
-    [new_task("root:build", "root", "build", [])],
+    [@workflow.new_node("root", [])],
+    [@workflow.new_task("root:build", "root", "build", [])],
     max_parallel=0,
   )
-  let issues = ir_issues(ir)
+  let issues = @workflow.ir_issues(ir)
   let text = issues.join("\n")
   assert_true(text.contains("workflow.max_parallel must be positive"))
 }
@@ -1304,11 +1322,11 @@ test "workflow engine: starlark subset parses and runs" {
     #|task(id="root:build", node="root", cmd="build", needs=[])
     #|task(id="dep:test", node="dep", cmd="test", needs=["root:build"])
     #|entrypoint(targets=["dep:test"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.nodes.length(), 2)
   assert_eq(parsed.ir.tasks.length(), 2)
-  let result = execute_ir(parsed.ir, run_ok)
+  let result = @workflow.execute_ir(parsed.ir, run_ok)
   assert_eq(result.ok, true)
   assert_eq(result.steps.length(), 2)
 }
@@ -1318,7 +1336,7 @@ test "workflow engine: starlark subset parser reports unknown function" {
   let src =
     #|workflow(name="ci")
     #|unknown_call(x="y")
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_true(parsed.errors.length() > 0)
   assert_true(parsed.errors.join("\n").contains("unknown statement"))
 }
@@ -1335,12 +1353,15 @@ test "workflow engine: parse_from_fs load imports function and alias" {
   let lib_src =
     #|def emit(name):
     #|  task(id="root:" + name, node="root", cmd=name, needs=[])
-  let fs = FsAdapter::memory_with({
+  let fs = @workflow.FsAdapter::memory_with({
     "workspace/main.star": root_src,
     "workspace/lib.star": lib_src,
   })
-  let adapter = WorkflowAdapter::new(fs, CommandAdapter::none())
-  let parsed = parse_from_fs("workspace/main.star", adapter)
+  let adapter = @workflow.WorkflowAdapter::new(
+    fs,
+    @workflow.CommandAdapter::none(),
+  )
+  let parsed = @workflow.parse_from_fs("workspace/main.star", adapter)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.tasks.length(), 2)
   assert_eq(parsed.ir.tasks[0].id, "root:build")
@@ -1357,12 +1378,15 @@ test "workflow engine: parse_from_fs load imports value with alias" {
     #|entrypoint(targets=["root:build"])
   let lib_src =
     #|task_name = "build"
-  let fs = FsAdapter::memory_with({
+  let fs = @workflow.FsAdapter::memory_with({
     "workspace/main.star": root_src,
     "workspace/lib.star": lib_src,
   })
-  let adapter = WorkflowAdapter::new(fs, CommandAdapter::none())
-  let parsed = parse_from_fs("workspace/main.star", adapter)
+  let adapter = @workflow.WorkflowAdapter::new(
+    fs,
+    @workflow.CommandAdapter::none(),
+  )
+  let parsed = @workflow.parse_from_fs("workspace/main.star", adapter)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.tasks.length(), 1)
   assert_eq(parsed.ir.tasks[0].id, "root:build")
@@ -1377,12 +1401,15 @@ test "workflow engine: parse_from_fs load reports unknown symbol" {
   let lib_src =
     #|def emit(name):
     #|  task(id="root:" + name, node="root", cmd=name, needs=[])
-  let fs = FsAdapter::memory_with({
+  let fs = @workflow.FsAdapter::memory_with({
     "workspace/main.star": root_src,
     "workspace/lib.star": lib_src,
   })
-  let adapter = WorkflowAdapter::new(fs, CommandAdapter::none())
-  let parsed = parse_from_fs("workspace/main.star", adapter)
+  let adapter = @workflow.WorkflowAdapter::new(
+    fs,
+    @workflow.CommandAdapter::none(),
+  )
+  let parsed = @workflow.parse_from_fs("workspace/main.star", adapter)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("loaded symbol 'missing' not found"))
 }
@@ -1397,7 +1424,7 @@ test "workflow engine: starlark def defines reusable statement function" {
     #|emit(name="build")
     #|emit(name="test")
     #|entrypoint(targets=["root:build", "root:test"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.tasks.length(), 2)
   assert_eq(parsed.ir.tasks[0].id, "root:build")
@@ -1416,7 +1443,7 @@ test "workflow engine: starlark def uses local scope for assignments" {
     #|emit()
     #|task(id="root:" + name, node="root", cmd=name, needs=[])
     #|entrypoint(targets=["root:local", "root:global"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.tasks.length(), 2)
   assert_eq(parsed.ir.tasks[0].id, "root:local")
@@ -1435,7 +1462,7 @@ test "workflow engine: starlark return inside def does not stop caller scope" {
     #|emit()
     #|task(id="root:c", node="root", cmd="c", needs=[])
     #|entrypoint(targets=["root:a", "root:c"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.tasks.length(), 2)
   assert_eq(parsed.ir.tasks[0].id, "root:a")
@@ -1450,7 +1477,7 @@ test "workflow engine: starlark def validates missing arguments" {
     #|def emit(name):
     #|  task(id="root:" + name, node="root", cmd=name, needs=[])
     #|emit()
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("missing argument 'name' for function emit"))
 }
@@ -1465,7 +1492,7 @@ test "workflow engine: starlark def supports positional and default arguments" {
     #|emit("build")
     #|emit("test", "test")
     #|entrypoint(targets=["root:build", "root:test"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.tasks.length(), 2)
   assert_eq(parsed.ir.tasks[0].id, "root:build")
@@ -1483,7 +1510,7 @@ test "workflow engine: starlark def supports return value in expression context"
     #|  return "root:" + name
     #|task(id=task_id("build"), node="root", cmd="build", needs=[])
     #|entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.tasks.length(), 1)
   assert_eq(parsed.ir.tasks[0].id, "root:build")
@@ -1497,7 +1524,7 @@ test "workflow engine: starlark def reports too many positional arguments" {
     #|def emit(name):
     #|  task(id="root:" + name, node="root", cmd=name, needs=[])
     #|emit("build", "extra")
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("too many positional arguments for function emit"))
 }
@@ -1511,7 +1538,7 @@ test "workflow engine: starlark def expression call supports keyword arguments" 
     #|  return prefix + ":" + name
     #|task(id=task_id(prefix="root", name="build"), node="root", cmd="build", needs=[])
     #|entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.tasks.length(), 1)
   assert_eq(parsed.ir.tasks[0].id, "root:build")
@@ -1521,7 +1548,7 @@ test "workflow engine: starlark def expression call supports keyword arguments" 
 test "workflow engine: starlark expression helper rejects keyword arguments" {
   let src =
     #|workflow(name=str(value="ci"))
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   let text = parsed.errors.join("\n")
   assert_true(
     text.contains(
@@ -1536,7 +1563,7 @@ test "workflow engine: starlark function recursion depth is limited" {
     #|def loop(n):
     #|  return loop(n + 1)
     #|workflow(name=loop(0))
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("function call depth exceeded"))
   assert_true(text.contains("call stack"))
@@ -1550,7 +1577,7 @@ test "workflow engine: starlark function errors include call stack" {
     #|def outer():
     #|  return inner()
     #|workflow(name=outer())
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("missing argument 'name' for function inner"))
   assert_true(text.contains("call stack: outer -> inner"))
@@ -1563,11 +1590,11 @@ test "workflow engine: starlark parser supports cmd array and inline comments" {
     #|node(id="root", depends_on=[])
     #|task(id="root:test", node="root", cmd=["just", "test"], needs=[]) # tail comment
     #|entrypoint(targets=["root:test"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.tasks.length(), 1)
   assert_eq(parsed.ir.tasks[0].cmd, "just test")
-  let result = execute_ir(parsed.ir, run_ok)
+  let result = @workflow.execute_ir(parsed.ir, run_ok)
   assert_eq(result.ok, true)
   assert_eq(result.steps.length(), 1)
 }
@@ -1588,7 +1615,7 @@ test "workflow engine: starlark task supports srcs outs cwd and trigger" {
     #|  trigger="manual",
     #|)
     #|entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.tasks.length(), 1)
   let task = parsed.ir.tasks[0]
@@ -1613,7 +1640,7 @@ test "workflow engine: starlark target alias maps to task semantics" {
     #|  srcs=["packages/root/**"],
     #|)
     #|entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.tasks.length(), 1)
   let task = parsed.ir.tasks[0]
@@ -1636,7 +1663,7 @@ test "workflow engine: starlark task supports env dict" {
     #|  env={"NODE_ENV": "test", "CI": "1"},
     #|)
     #|entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.tasks.length(), 1)
   let env = parsed.ir.tasks[0].env
@@ -1656,7 +1683,7 @@ test "workflow engine: starlark task env rejects non-string value" {
     #|  needs=[],
     #|  env={"CI": 1},
     #|)
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("task.env must be {string:string}"))
 }
@@ -1675,7 +1702,7 @@ test "workflow engine: starlark assignment binds and references values" {
     #|task(id=target_id, node=target_node, cmd=build_cmd, needs=[], srcs=task_srcs, env=task_env)
     #|entry_targets = [target_id]
     #|entrypoint(targets=entry_targets)
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.name, "ci")
   assert_eq(parsed.ir.entry_targets.length(), 1)
@@ -1694,7 +1721,7 @@ test "workflow engine: starlark assignment reports unknown variable reference" {
     #|workflow(name="ci")
     #|node(id="root", depends_on=[])
     #|task(id="root:build", node="root", cmd=unknown_cmd, needs=[])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("unknown variable 'unknown_cmd'"))
 }
@@ -1711,7 +1738,7 @@ test "workflow engine: starlark var binds default value by name" {
     #|node(id=node_id, depends_on=[])
     #|task(id=task_id, node=node_id, cmd=task_cmd, needs=[], env=task_env)
     #|entrypoint(targets=[task_id])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.name, "ci")
   assert_eq(parsed.ir.tasks.length(), 1)
@@ -1729,7 +1756,7 @@ test "workflow engine: starlark config overrides var binding" {
     #|node(id="root", depends_on=[])
     #|task(id="root:build", node="root", cmd=["echo", profile], needs=[], env={"PROFILE": profile})
     #|entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.tasks.length(), 1)
   let task = parsed.ir.tasks[0]
@@ -1745,7 +1772,7 @@ test "workflow engine: starlark var type enforces default and config values" {
     #|workflow(name="ci", max_parallel=retries)
     #|node(id="root", depends_on=[])
     #|task(id="root:build", node="root", cmd="build", needs=[])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.max_parallel, 3)
   assert_eq(parsed.ir.tasks.length(), 1)
@@ -1756,7 +1783,7 @@ test "workflow engine: starlark var type enforces default and config values" {
 test "workflow engine: starlark var type rejects default mismatch" {
   let src =
     #|var(name="retries", type="int", default="1")
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("var.default must match type 'int'"))
 }
@@ -1766,7 +1793,7 @@ test "workflow engine: starlark var type rejects config mismatch" {
   let src =
     #|var(name="retries", type="int", default=1)
     #|config(name="retries", value="3")
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("config.value for 'retries' must match type 'int'"))
 }
@@ -1775,7 +1802,7 @@ test "workflow engine: starlark var type rejects config mismatch" {
 test "workflow engine: starlark var type rejects unknown type name" {
   let src =
     #|var(name="mode", type="unknown", default="dev")
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("var.type must be one of"))
 }
@@ -1784,7 +1811,7 @@ test "workflow engine: starlark var type rejects unknown type name" {
 test "workflow engine: starlark config requires declared var" {
   let src =
     #|config(name="mode", value="prod")
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("config.name 'mode' is not declared by var()"))
 }
@@ -1797,7 +1824,7 @@ test "workflow engine: starlark required var can be injected by external inputs"
     #|node(id="root", depends_on=[])
     #|task(id="root:build", node="root", cmd=["echo", profile], needs=[])
     #|entrypoint(targets=["root:build"])
-  let parsed = parse_with_inputs(src, { "profile": "prod" })
+  let parsed = @workflow.parse_with_inputs(src, { "profile": "prod" })
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.name, "prod")
   assert_eq(parsed.ir.tasks.length(), 1)
@@ -1812,7 +1839,7 @@ test "workflow engine: starlark required var allows missing default with externa
     #|node(id="root", depends_on=[])
     #|task(id="root:build", node="root", cmd=["echo", profile], needs=[])
     #|entrypoint(targets=["root:build"])
-  let parsed = parse_with_inputs(src, { "profile": "prod" })
+  let parsed = @workflow.parse_with_inputs(src, { "profile": "prod" })
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.name, "prod")
   assert_eq(parsed.ir.tasks[0].cmd, "echo prod")
@@ -1825,7 +1852,7 @@ test "workflow engine: starlark required var reports error when unresolved" {
     #|workflow(name=profile)
     #|node(id="root", depends_on=[])
     #|task(id="root:build", node="root", cmd=["echo", profile], needs=[])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("required var 'profile' must be provided"))
 }
@@ -1834,7 +1861,7 @@ test "workflow engine: starlark required var reports error when unresolved" {
 test "workflow engine: starlark non-required var without default reports semantic error" {
   let src =
     #|var(name="profile")
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   let text = parsed.errors.join("\n")
   assert_true(
     text.contains("var.default is required when var.required is false"),
@@ -1846,7 +1873,7 @@ test "workflow engine: starlark unresolved var default does not emit required-va
   let src =
     #|var(name="profile", required=True, default=unknown_profile)
     #|workflow(name="ci")
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("unknown variable 'unknown_profile'"))
   assert_eq(
@@ -1865,7 +1892,7 @@ test "workflow engine: starlark required var is resolved by config override" {
     #|workflow(name=profile)
     #|node(id="root", depends_on=[])
     #|task(id="root:build", node="root", cmd=["echo", profile], needs=[])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.name, "prod")
   assert_eq(parsed.ir.tasks[0].cmd, "echo prod")
@@ -1877,7 +1904,7 @@ test "workflow engine: starlark config before var reports declaration-order erro
     #|config(name="profile", value="prod")
     #|var(name="profile", default="dev")
     #|workflow(name=profile)
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("config.name 'profile' is not declared by var()"))
 }
@@ -1892,7 +1919,7 @@ test "workflow engine: starlark external inputs follow var type conversion" {
     #|workflow(name="ci", max_parallel=retries)
     #|node(id="root", depends_on=[])
     #|task(id="root:build", node="root", cmd=labels, needs=[], env=env_map, required=enable_cache)
-  let parsed = parse_with_inputs(src, {
+  let parsed = @workflow.parse_with_inputs(src, {
     "retries": "3",
     "enable_cache": "true",
     "labels": "prod,release",
@@ -1910,14 +1937,14 @@ test "workflow engine: starlark external inputs follow var type conversion" {
 test "workflow engine: starlark external input conversion reports type errors" {
   let src =
     #|var(name="retries", type="int", required=True, default=1)
-  let parsed = parse_with_inputs(src, { "retries": "abc" })
+  let parsed = @workflow.parse_with_inputs(src, { "retries": "abc" })
   let text = parsed.errors.join("\n")
   assert_true(text.contains("external input for 'retries' must be int"))
 }
 
 ///|
 test "workflow engine: parse_external_inputs merges env and cli with cli precedence" {
-  let result = parse_external_inputs(
+  let result = @workflow.parse_external_inputs(
     ["--var", "profile=prod", "--var=retries=3"],
     { "BITFLOW_VAR_profile": "dev", "BITFLOW_VAR_node_id": "root" },
   )
@@ -1929,7 +1956,7 @@ test "workflow engine: parse_external_inputs merges env and cli with cli precede
 
 ///|
 test "workflow engine: parse_external_inputs reports malformed cli and env entries" {
-  let result = parse_external_inputs(
+  let result = @workflow.parse_external_inputs(
     ["--var", "broken", "--var=novalue", "--var"],
     { "BITFLOW_VAR_": "x" },
   )
@@ -1941,7 +1968,7 @@ test "workflow engine: parse_external_inputs reports malformed cli and env entri
 
 ///|
 test "workflow engine: parse_external_inputs trims cli key and value" {
-  let result = parse_external_inputs(["--var", " profile = prod "], {})
+  let result = @workflow.parse_external_inputs(["--var", " profile = prod "], {})
   assert_eq(result.errors.length(), 0)
   assert_eq(result.values.get("profile"), Some("prod"))
 }
@@ -1951,7 +1978,10 @@ test "workflow engine: starlark reports unknown external input key" {
   let src =
     #|var(name="profile", default="dev")
     #|workflow(name=profile)
-  let parsed = parse_with_inputs(src, { "profile": "prod", "profiel": "typo" })
+  let parsed = @workflow.parse_with_inputs(src, {
+    "profile": "prod",
+    "profiel": "typo",
+  })
   let text = parsed.errors.join("\n")
   assert_true(
     text.contains("external input 'profiel' is not declared by var()"),
@@ -1963,16 +1993,19 @@ test "workflow engine: parse_with_cli_env injects vars" {
   let src =
     #|var(name="profile", type="string", required=True, default="dev")
     #|workflow(name=profile)
-  let parsed = parse_with_cli_env(src, ["--var=profile=prod"], {})
+  let parsed = @workflow.parse_with_cli_env(src, ["--var=profile=prod"], {})
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.name, "prod")
 }
 
 ///|
 test "workflow engine: changed paths selects auto targets and executes dependencies" {
-  let nodes = [new_node("root", []), new_node("dep", ["root"])]
+  let nodes = [
+    @workflow.new_node("root", []),
+    @workflow.new_node("dep", ["root"]),
+  ]
   let tasks = [
-    new_task(
+    @workflow.new_task(
       "root:build",
       "root",
       "build",
@@ -1980,7 +2013,7 @@ test "workflow engine: changed paths selects auto targets and executes dependenc
       srcs=["packages/root/**"],
       trigger_mode="auto",
     ),
-    new_task(
+    @workflow.new_task(
       "dep:test",
       "dep",
       "test",
@@ -1988,7 +2021,7 @@ test "workflow engine: changed paths selects auto targets and executes dependenc
       srcs=["packages/dep/**"],
       trigger_mode="manual",
     ),
-    new_task(
+    @workflow.new_task(
       "dep:lint",
       "dep",
       "lint",
@@ -1997,12 +2030,12 @@ test "workflow engine: changed paths selects auto targets and executes dependenc
       trigger_mode="auto",
     ),
   ]
-  let ir = new_ir("ci", nodes, tasks)
+  let ir = @workflow.new_ir("ci", nodes, tasks)
   let changed = ["packages/dep/src/main.ts"]
-  let targets = entry_targets_for_changed_paths(ir, changed)
+  let targets = @workflow.entry_targets_for_changed_paths(ir, changed)
   assert_eq(targets.contains("dep:lint"), true)
   assert_eq(targets.contains("dep:test"), false)
-  let result = execute_ir_for_changed_paths(ir, changed, run_ok)
+  let result = @workflow.execute_ir_for_changed_paths(ir, changed, run_ok)
   assert_eq(result.ok, true)
   assert_eq(result.order.length(), 2)
   assert_eq(result.order[0], "root:build")
@@ -2011,9 +2044,9 @@ test "workflow engine: changed paths selects auto targets and executes dependenc
 
 ///|
 test "workflow engine: changed paths can target auto task by outs patterns" {
-  let nodes = [new_node("root", [])]
+  let nodes = [@workflow.new_node("root", [])]
   let tasks = [
-    new_task(
+    @workflow.new_task(
       "root:pack",
       "root",
       "pack",
@@ -2023,12 +2056,12 @@ test "workflow engine: changed paths can target auto task by outs patterns" {
       trigger_mode="auto",
     ),
   ]
-  let ir = new_ir("ci", nodes, tasks)
+  let ir = @workflow.new_ir("ci", nodes, tasks)
   let changed = ["dist/root/bundle.js"]
-  let targets = entry_targets_for_changed_paths(ir, changed)
+  let targets = @workflow.entry_targets_for_changed_paths(ir, changed)
   assert_eq(targets.length(), 1)
   assert_eq(targets[0], "root:pack")
-  let result = execute_ir_for_changed_paths(ir, changed, run_ok)
+  let result = @workflow.execute_ir_for_changed_paths(ir, changed, run_ok)
   assert_eq(result.ok, true)
   assert_eq(result.order.join(","), "root:pack")
 }
@@ -2040,7 +2073,7 @@ test "workflow engine: execute runs parsed workflow directly" {
     #|node(id="root", depends_on=[])
     #|task(id="root:build", node="root", cmd="build", needs=[])
     #|entrypoint(targets=["root:build"])
-  let result = execute(src, run_ok)
+  let result = @workflow.execute(src, run_ok)
   assert_eq(result.ok, true)
   assert_eq(result.state, "completed")
   assert_eq(result.order.length(), 1)
@@ -2051,7 +2084,7 @@ test "workflow engine: execute runs parsed workflow directly" {
 test "workflow engine: starlark compatibility accepts semicolon separated calls" {
   let src =
     #|workflow(name='ci'); node(id='root', depends_on=[]); task(id='root:build', node='root', cmd='build', needs=[]); entrypoint(targets=['root:build'])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.name, "ci")
   assert_eq(parsed.ir.nodes.length(), 1)
@@ -2066,7 +2099,7 @@ test "workflow engine: starlark compatibility accepts trailing comma in call arg
     #|node(id="root", depends_on=[],)
     #|task(id="root:test", node="root", cmd=["just", "test",], needs=[],)
     #|entrypoint(targets=["root:test"],)
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.tasks.length(), 1)
   assert_eq(parsed.ir.tasks[0].cmd, "just test")
@@ -2079,7 +2112,7 @@ test "workflow engine: starlark compatibility supports single quote and bool lit
     #|node(id='root', depends_on=[], required=False)
     #|task(id='root:lint', node='root', cmd='lint', needs=[], required=True)
     #|entrypoint(targets=['root:lint'])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.nodes.length(), 1)
   assert_eq(parsed.ir.nodes[0].required, false)
@@ -2094,7 +2127,7 @@ test "workflow engine: starlark compatibility supports plus expressions" {
     #|node(id="root", depends_on=[])
     #|task(id="root:" + task_name, node="root", cmd=["just", task_name + "-all"], needs=[])
     #|entrypoint(targets=["root:" + task_name])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.max_parallel, 2)
   assert_eq(parsed.ir.tasks.length(), 1)
@@ -2112,7 +2145,7 @@ test "workflow engine: starlark compatibility supports if statement (inline suit
     #|node(id="root", depends_on=[])
     #|if enabled: task(id="root:build", node="root", cmd="build", needs=[])
     #|entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.tasks.length(), 1)
   assert_eq(parsed.ir.tasks[0].id, "root:build")
@@ -2125,7 +2158,7 @@ test "workflow engine: starlark if statement skips body when condition is false"
     #|workflow(name="ci")
     #|node(id="root", depends_on=[])
     #|if enabled: task(id="root:build", node="root", cmd="build", needs=[])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.tasks.length(), 0)
 }
@@ -2139,7 +2172,7 @@ test "workflow engine: starlark compatibility supports if statement (block suite
     #|if enabled:
     #|  task(id="root:build", node="root", cmd="build", needs=[])
     #|  entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.tasks.length(), 1)
   assert_eq(parsed.ir.tasks[0].id, "root:build")
@@ -2158,7 +2191,7 @@ test "workflow engine: starlark if statement supports else block" {
     #|else:
     #|  task(id="root:lint", node="root", cmd="lint", needs=[])
     #|entrypoint(targets=["root:lint"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.tasks.length(), 1)
   assert_eq(parsed.ir.tasks[0].id, "root:lint")
@@ -2179,7 +2212,7 @@ test "workflow engine: starlark if statement supports elif chain" {
     #|else:
     #|  task(id="root:lint", node="root", cmd="lint", needs=[])
     #|entrypoint(targets=["root:test"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.tasks.length(), 1)
   assert_eq(parsed.ir.tasks[0].id, "root:test")
@@ -2193,7 +2226,7 @@ test "workflow engine: starlark compatibility supports for statement (inline sui
     #|node(id="root", depends_on=[])
     #|for task_name in task_names: task(id="root:" + task_name, node="root", cmd=task_name, needs=[])
     #|entrypoint(targets=["root:build", "root:test"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.tasks.length(), 2)
   assert_eq(parsed.ir.tasks[0].id, "root:build")
@@ -2209,7 +2242,7 @@ test "workflow engine: starlark compatibility supports for statement (block suit
     #|for task_name in task_names:
     #|  task(id="root:" + task_name, node="root", cmd=task_name, needs=[])
     #|entrypoint(targets=["root:build", "root:test"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.tasks.length(), 2)
   assert_eq(parsed.ir.tasks[0].id, "root:build")
@@ -2226,7 +2259,7 @@ test "workflow engine: starlark block suites support nested if inside for" {
     #|  if task_name == "build":
     #|    task(id="root:" + task_name, node="root", cmd=task_name, needs=[])
     #|entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.tasks.length(), 1)
   assert_eq(parsed.ir.tasks[0].id, "root:build")
@@ -2244,7 +2277,7 @@ test "workflow engine: starlark block suites support nested if else inside for" 
     #|  else:
     #|    task(id="root:" + task_name, node="root", cmd=task_name, needs=[])
     #|entrypoint(targets=["root:build", "root:lint"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.tasks.length(), 2)
   assert_eq(parsed.ir.tasks[0].id, "root:build")
@@ -2261,7 +2294,7 @@ test "workflow engine: starlark compatibility supports while statement (block su
     #|  task(id="root:" + str(counter), node="root", cmd="run", needs=[])
     #|  counter = counter + 1
     #|entrypoint(targets=["root:0", "root:1"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.tasks.length(), 2)
   assert_eq(parsed.ir.tasks[0].id, "root:0")
@@ -2275,7 +2308,7 @@ test "workflow engine: starlark while statement skips body when condition is fal
     #|workflow(name="ci")
     #|node(id="root", depends_on=[])
     #|while counter > 0: task(id="root:run", node="root", cmd="run", needs=[])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.tasks.length(), 0)
 }
@@ -2292,7 +2325,7 @@ test "workflow engine: starlark while statement supports break" {
     #|  if counter == 3:
     #|    break
     #|entrypoint(targets=["root:1", "root:2", "root:3"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.tasks.length(), 3)
   assert_eq(parsed.ir.tasks[0].id, "root:1")
@@ -2312,7 +2345,7 @@ test "workflow engine: starlark while statement supports continue" {
     #|    continue
     #|  task(id="root:" + str(counter), node="root", cmd="run", needs=[])
     #|entrypoint(targets=["root:1", "root:3", "root:4"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.tasks.length(), 3)
   assert_eq(parsed.ir.tasks[0].id, "root:1")
@@ -2329,7 +2362,7 @@ test "workflow engine: starlark return stops subsequent statements" {
     #|task(id="root:a", node="root", cmd="a", needs=[])
     #|return
     #|task(id="root:b", node="root", cmd="b", needs=[])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.tasks.length(), 1)
   assert_eq(parsed.ir.tasks[0].id, "root:a")
@@ -2341,7 +2374,7 @@ test "workflow engine: starlark break outside loop reports semantic error" {
     #|workflow(name="ci")
     #|node(id="root", depends_on=[])
     #|break
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("break statement is only allowed inside loops"))
 }
@@ -2352,7 +2385,7 @@ test "workflow engine: starlark continue outside loop reports semantic error" {
     #|workflow(name="ci")
     #|node(id="root", depends_on=[])
     #|continue
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("continue statement is only allowed inside loops"))
 }
@@ -2364,7 +2397,7 @@ test "workflow engine: starlark block suite requires indentation" {
     #|node(id="root", depends_on=[])
     #|if True:
     #|task(id="root:build", node="root", cmd="build", needs=[])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("expected indented statement body after if"))
 }
@@ -2375,7 +2408,7 @@ test "workflow engine: starlark for statement requires list iterable" {
     #|workflow(name="ci")
     #|node(id="root", depends_on=[])
     #|for task_name in 1: task(id="root:" + task_name, node="root", cmd="build", needs=[])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("for.iter must be iterable"))
 }
@@ -2388,7 +2421,7 @@ test "workflow engine: starlark for statement supports dict iterable" {
     #|for task_name in {"build": "ok"}:
     #|  task(id="root:" + task_name, node="root", cmd="build", needs=[])
     #|entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.tasks.length(), 1)
   assert_eq(parsed.ir.tasks[0].id, "root:build")
@@ -2402,7 +2435,7 @@ test "workflow engine: starlark for statement supports string iterable" {
     #|for ch in "ab":
     #|  task(id="root:" + ch, node="root", cmd="build", needs=[])
     #|entrypoint(targets=["root:a", "root:b"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.tasks.length(), 2)
   assert_eq(parsed.ir.tasks[0].id, "root:a")
@@ -2413,7 +2446,7 @@ test "workflow engine: starlark for statement supports string iterable" {
 test "workflow engine: starlark compatibility recognizes None literal" {
   let src =
     #|workflow(name=None)
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("workflow.name must be string"))
 }
@@ -2426,7 +2459,7 @@ test "workflow engine: starlark compatibility supports equality expressions" {
     #|node(id="root", depends_on=[], required=mode == "strict")
     #|task(id="root:build", node="root", cmd="build", needs=[], required=mode != "skip")
     #|entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.nodes.length(), 1)
   assert_eq(parsed.ir.nodes[0].required, true)
@@ -2443,7 +2476,7 @@ test "workflow engine: starlark compatibility comparison has lower precedence th
     #|node(id="root", depends_on=[], required=is_entry)
     #|task(id="root:build", node="root", cmd="build", needs=[])
     #|entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.nodes.length(), 1)
   assert_eq(parsed.ir.nodes[0].required, true)
@@ -2457,7 +2490,7 @@ test "workflow engine: starlark compatibility supports None equality" {
     #|node(id="root", depends_on=[], required=missing == None)
     #|task(id="root:build", node="root", cmd="build", needs=[], required=missing != None)
     #|entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.nodes.length(), 1)
   assert_eq(parsed.ir.nodes[0].required, true)
@@ -2469,7 +2502,7 @@ test "workflow engine: starlark compatibility supports None equality" {
 test "workflow engine: starlark compatibility reports invalid plus operand types" {
   let src =
     #|workflow(name="ci", max_parallel=1 + "x")
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("'+' requires both operands"))
 }
@@ -2482,7 +2515,7 @@ test "workflow engine: starlark compatibility supports binary minus and multiply
     #|node(id="root", depends_on=[], required=(2 * 3 == 6) and (n - 3 == 2))
     #|task(id="root:build", node="root", cmd="build", needs=[], required=(n - 2 * 2 == 1))
     #|entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.max_parallel, 4)
   assert_eq(parsed.ir.nodes.length(), 1)
@@ -2500,7 +2533,7 @@ test "workflow engine: starlark compatibility supports sequence repetition by mu
     #|node(id="root", depends_on=[], required=label == "abab" and items == ["x", "x", "x"])
     #|task(id="root:build", node="root", cmd="build", needs=[], required=(2 * ["a", "b"] == ["a", "b", "a", "b"]) and ("x" * 0 == ""))
     #|entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.name, "cici")
   assert_eq(parsed.ir.nodes.length(), 1)
@@ -2516,7 +2549,7 @@ test "workflow engine: starlark arithmetic reports invalid operand types" {
     #|node(id="root", depends_on=[], required=("x" - "y") == 0)
     #|task(id="root:build", node="root", cmd="build", needs=[], required=({"k":"v"} * 2) == 0)
     #|entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("'-' requires int operands"))
   assert_true(text.contains("'*' requires int*int or (string/list)*int"))
@@ -2529,7 +2562,7 @@ test "workflow engine: starlark compatibility supports floor division and modulo
     #|node(id="root", depends_on=[], required=(7 % 3 == 1) and (3 * 2 // 3 == 2))
     #|task(id="root:build", node="root", cmd="build", needs=[], required=(8 // 3 == 2))
     #|entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.max_parallel, 5)
   assert_eq(parsed.ir.nodes.length(), 1)
@@ -2545,7 +2578,7 @@ test "workflow engine: starlark floor division and modulo report invalid usage" 
     #|node(id="root", depends_on=[], required=("x" // 2) == 0)
     #|task(id="root:build", node="root", cmd="build", needs=[], required=(1 % 0) == 0)
     #|entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("'//' requires int operands"))
   assert_true(text.contains("integer modulo by zero"))
@@ -2560,7 +2593,7 @@ test "workflow engine: starlark compatibility supports logical operators and gro
     #|node(id="root", depends_on=[], required=gate)
     #|task(id="root:build", node="root", cmd="build", needs=[], required=None or False)
     #|entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.nodes.length(), 1)
   assert_eq(parsed.ir.nodes[0].required, true)
@@ -2575,7 +2608,7 @@ test "workflow engine: starlark logical operators short-circuit unresolved refs"
     #|node(id="root", depends_on=[], required=False and missing_ref)
     #|task(id="root:build", node="root", cmd="build", needs=[], required=True or missing_ref)
     #|entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.nodes[0].required, false)
   assert_eq(parsed.ir.tasks[0].required, true)
@@ -2585,7 +2618,7 @@ test "workflow engine: starlark logical operators short-circuit unresolved refs"
 test "workflow engine: starlark parser reports unclosed grouped expression" {
   let src =
     #|workflow(name=("ci", max_parallel=1)
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("expected ')' to close expression"))
 }
@@ -2598,7 +2631,7 @@ test "workflow engine: starlark compatibility supports relational operators" {
     #|node(id="root", depends_on=[], required=workers >= 3 and workers > 2 and workers <= 3 and workers < 4)
     #|task(id="root:build", node="root", cmd="build", needs=[], required=workers < 3)
     #|entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.max_parallel, 3)
   assert_eq(parsed.ir.nodes.length(), 1)
@@ -2615,7 +2648,7 @@ test "workflow engine: starlark compatibility supports chained comparisons" {
     #|node(id="root", depends_on=[], required=1 < workers < 5)
     #|task(id="root:build", node="root", cmd="build", needs=[], required=5 > workers >= 3)
     #|entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.nodes.length(), 1)
   assert_eq(parsed.ir.nodes[0].required, true)
@@ -2630,7 +2663,7 @@ test "workflow engine: starlark chained comparisons short-circuit unresolved ref
     #|node(id="root", depends_on=[], required=3 < 2 < missing_ref)
     #|task(id="root:build", node="root", cmd="build", needs=[], required=2 > 3 > missing_ref)
     #|entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.nodes.length(), 1)
   assert_eq(parsed.ir.nodes[0].required, false)
@@ -2647,7 +2680,7 @@ test "workflow engine: starlark compatibility supports in and not in operators" 
     #|node(id="root", depends_on=[], required="build" in labels and "release" not in labels)
     #|task(id="root:build", node="root", cmd="build", needs=[], required="MODE" in env and "DEBUG" not in env and "od" in "prod")
     #|entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.nodes.length(), 1)
   assert_eq(parsed.ir.nodes[0].required, true)
@@ -2664,7 +2697,7 @@ test "workflow engine: starlark compatibility supports index expressions" {
     #|node(id="root", depends_on=[], required=labels[0] == "build" and env["MODE"][0] == "p")
     #|task(id="root:build", node="root", cmd="build", needs=[], required=("i" == "ci"[1]) and labels[1] == "test")
     #|entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.nodes.length(), 1)
   assert_eq(parsed.ir.nodes[0].required, true)
@@ -2679,7 +2712,7 @@ test "workflow engine: starlark index expression short-circuits unresolved refs"
     #|node(id="root", depends_on=[], required=False and missing_ref[0])
     #|task(id="root:build", node="root", cmd="build", needs=[], required=True or missing_ref[0])
     #|entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.nodes.length(), 1)
   assert_eq(parsed.ir.nodes[0].required, false)
@@ -2696,7 +2729,7 @@ test "workflow engine: starlark index expression reports invalid access" {
     #|node(id="root", depends_on=[], required=items[1] == "a")
     #|task(id="root:build", node="root", cmd="build", needs=[], required=env["DEBUG"] == "1")
     #|entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("list index must be int"))
   assert_true(text.contains("list index out of range"))
@@ -2712,7 +2745,7 @@ test "workflow engine: starlark compatibility supports slice expressions" {
     #|node(id="root", depends_on=[], required=labels[0:2] == ["build", "test"] and labels[:1] == ["build"])
     #|task(id="root:build", node="root", cmd="build", needs=[], required=labels[1:] == ["test", "lint"] and word[1:5] == "orkf" and word[-4:-1] == "flo")
     #|entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.nodes.length(), 1)
   assert_eq(parsed.ir.nodes[0].required, true)
@@ -2727,7 +2760,7 @@ test "workflow engine: starlark slice expression short-circuits unresolved refs"
     #|node(id="root", depends_on=[], required=False and missing_ref[0:1])
     #|task(id="root:build", node="root", cmd="build", needs=[], required=True or missing_ref[:1])
     #|entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.nodes.length(), 1)
   assert_eq(parsed.ir.nodes[0].required, false)
@@ -2743,7 +2776,7 @@ test "workflow engine: starlark slice expression reports invalid bounds" {
     #|node(id="root", depends_on=[], required=items["0":1] == ["a"])
     #|task(id="root:build", node="root", cmd="build", needs=[], required="abc"[0:"2"] == "ab")
     #|entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("slice start must be int"))
   assert_true(text.contains("slice end must be int"))
@@ -2758,7 +2791,7 @@ test "workflow engine: starlark compatibility supports slice step expressions" {
     #|node(id="root", depends_on=[], required=labels[::2] == ["a", "c", "e"] and labels[1:5:2] == ["b", "d"])
     #|task(id="root:build", node="root", cmd="build", needs=[], required=word[::2] == "wrfo" and word[6:1:-2] == "ofr")
     #|entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.nodes.length(), 1)
   assert_eq(parsed.ir.nodes[0].required, true)
@@ -2774,7 +2807,7 @@ test "workflow engine: starlark slice step reports invalid usage" {
     #|node(id="root", depends_on=[], required=items[::0] == ["a"])
     #|task(id="root:build", node="root", cmd="build", needs=[], required="abc"[::"2"] == "ac")
     #|entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("slice step cannot be 0"))
   assert_true(text.contains("slice step must be int"))
@@ -2789,7 +2822,7 @@ test "workflow engine: starlark compatibility supports expression helper calls" 
     #|node(id="root", depends_on=[], required=len(labels) == 2 and len(env) == 1 and len("ok") == 2)
     #|task(id="root:build", node="root", cmd="build", needs=[], required=get(env, "MODE") == "prod" and get(env, "DEBUG", "0") == "0")
     #|entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.nodes.length(), 1)
   assert_eq(parsed.ir.nodes[0].required, true)
@@ -2805,7 +2838,7 @@ test "workflow engine: starlark get without default returns None" {
     #|node(id="root", depends_on=[], required=get(env, "DEBUG") == None)
     #|task(id="root:build", node="root", cmd="build", needs=[], required=get(env, "MODE") == "prod")
     #|entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.nodes.length(), 1)
   assert_eq(parsed.ir.nodes[0].required, true)
@@ -2817,7 +2850,7 @@ test "workflow engine: starlark get without default returns None" {
 test "workflow engine: starlark expression helper call reports unknown function" {
   let src =
     #|workflow(name=unknown_helper("ci"))
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("unknown expression function"))
 }
@@ -2829,7 +2862,7 @@ test "workflow engine: starlark len reports invalid operand type" {
     #|node(id="root", depends_on=[], required=len(1) == 1)
     #|task(id="root:build", node="root", cmd="build", needs=[])
     #|entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("len() expects string, list, or dict"))
 }
@@ -2842,7 +2875,7 @@ test "workflow engine: starlark compatibility supports str and int helper calls"
     #|node(id="root", depends_on=[], required=int("1") == 1 and int(True) == 1 and int(False) == 0)
     #|task(id="root:build", node="root", cmd="build", needs=[], required=str(True) == "True" and str(None) == "None")
     #|entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.name, "ci-2")
   assert_eq(parsed.ir.nodes.length(), 1)
@@ -2862,7 +2895,7 @@ test "workflow engine: starlark compatibility supports range enumerate and zip h
     #|node(id="root", depends_on=[], required=nums == [1, 3, 5] and pairs[1][0] == 1 and pairs[1][1] == "test")
     #|task(id="root:build", node="root", cmd="build", needs=[], required=len(zipped) == 3 and zipped[2][0] == "lint" and zipped[2][1] == 5)
     #|entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.nodes.length(), 1)
   assert_eq(parsed.ir.nodes[0].required, true)
@@ -2877,7 +2910,7 @@ test "workflow engine: starlark range reports invalid step" {
     #|node(id="root", depends_on=[], required=range(1, 3, 0) == [])
     #|task(id="root:build", node="root", cmd="build", needs=[])
     #|entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("range() step cannot be 0"))
 }
@@ -2889,7 +2922,7 @@ test "workflow engine: starlark enumerate and zip report invalid args" {
     #|node(id="root", depends_on=[], required=enumerate(1) == [])
     #|task(id="root:build", node="root", cmd="build", needs=[], required=zip(["x"]) == [])
     #|entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   let text = parsed.errors.join("\n")
   assert_true(
     text.contains("enumerate() expects iterable (string, list, or dict)"),
@@ -2904,7 +2937,7 @@ test "workflow engine: starlark int reports invalid input" {
     #|node(id="root", depends_on=[], required=int("x") == 0)
     #|task(id="root:build", node="root", cmd="build", needs=[])
     #|entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("int() expects numeric string"))
 }
@@ -2913,7 +2946,7 @@ test "workflow engine: starlark int reports invalid input" {
 test "workflow engine: starlark str reports invalid arity" {
   let src =
     #|workflow(name=str("ci", "extra"))
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("str() expects exactly 1 argument"))
 }
@@ -2926,7 +2959,7 @@ test "workflow engine: starlark compatibility supports keys and values helper ca
     #|node(id="root", depends_on=[], required=len(keys(env)) == 2 and "MODE" in keys(env) and "DEBUG" in keys(env))
     #|task(id="root:build", node="root", cmd="build", needs=[], required=len(values(env)) == 2 and "prod" in values(env) and "0" in values(env))
     #|entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.nodes.length(), 1)
   assert_eq(parsed.ir.nodes[0].required, true)
@@ -2941,7 +2974,7 @@ test "workflow engine: starlark keys and values report invalid args" {
     #|node(id="root", depends_on=[], required=keys("x") == [])
     #|task(id="root:build", node="root", cmd="build", needs=[], required=values({"k":"v"}, "extra") == [])
     #|entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("keys() expects dict"))
   assert_true(text.contains("values() expects exactly 1 argument"))
@@ -2956,7 +2989,7 @@ test "workflow engine: starlark compatibility supports contains helper call" {
     #|node(id="root", depends_on=[], required=contains(labels, "build") and contains("workflow", "flow"))
     #|task(id="root:build", node="root", cmd="build", needs=[], required=contains(env, "MODE") and not contains(env, "MISSING"))
     #|entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.nodes.length(), 1)
   assert_eq(parsed.ir.nodes[0].required, true)
@@ -2971,7 +3004,7 @@ test "workflow engine: starlark contains reports invalid args" {
     #|node(id="root", depends_on=[], required=contains("x"))
     #|task(id="root:build", node="root", cmd="build", needs=[], required=contains(1, 1))
     #|entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("contains() expects exactly 2 arguments"))
   assert_true(
@@ -2986,7 +3019,7 @@ test "workflow engine: starlark compatibility supports all and any helper calls"
     #|node(id="root", depends_on=[], required=all([True, 1, "ok"]) and any([False, 0, "ok"]) and all([]) and not any([]))
     #|task(id="root:build", node="root", cmd="build", needs=[], required=any({"":"x", "k":"v"}) and not all({"":"x"}) and any("x") and all("x") and all(""))
     #|entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.nodes.length(), 1)
   assert_eq(parsed.ir.nodes[0].required, true)
@@ -3001,7 +3034,7 @@ test "workflow engine: starlark all and any report invalid args" {
     #|node(id="root", depends_on=[], required=all(1))
     #|task(id="root:build", node="root", cmd="build", needs=[], required=any("x", "y"))
     #|entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("all() expects string, list, or dict"))
   assert_true(text.contains("any() expects exactly 1 argument"))
@@ -3015,7 +3048,7 @@ test "workflow engine: starlark compatibility supports split and join helper cal
     #|node(id="root", depends_on=[], required=parts == ["root", "build", "test"] and split("a--b--c", "--")[1] == "b")
     #|task(id="root:build", node="root", cmd="build", needs=[], required=join(["root", "build"], ":") == "root:build" and join(split("x/y", "/"), ":") == "x:y")
     #|entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.name, "root-build-test")
   assert_eq(parsed.ir.nodes.length(), 1)
@@ -3031,7 +3064,7 @@ test "workflow engine: starlark split and join report invalid args" {
     #|node(id="root", depends_on=[], required=split("a:b") == [])
     #|task(id="root:build", node="root", cmd="build", needs=[], required=join(["a", 1], ":") == "")
     #|entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("split() expects exactly 2 arguments"))
   assert_true(text.contains("join() items must be string list"))
@@ -3045,7 +3078,7 @@ test "workflow engine: starlark compatibility supports min and max helper calls"
     #|node(id="root", depends_on=[], required=min(numbers) == 1 and max(numbers) == 3 and min(5, 2, 9) == 2 and max(5, 2, 9) == 9)
     #|task(id="root:build", node="root", cmd="build", needs=[], required=min(4, 2) == 2 and max([1, 4, 3]) == 4)
     #|entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.nodes.length(), 1)
   assert_eq(parsed.ir.nodes[0].required, true)
@@ -3060,7 +3093,7 @@ test "workflow engine: starlark min and max report invalid args" {
     #|node(id="root", depends_on=[], required=min() == 0)
     #|task(id="root:build", node="root", cmd="build", needs=[], required=max(["x", 1]) == 0)
     #|entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("min() expects at least 1 argument"))
   assert_true(text.contains("max() expects int arguments or [int]"))
@@ -3073,7 +3106,7 @@ test "workflow engine: starlark compatibility supports abs and clamp helper call
     #|node(id="root", depends_on=[], required=abs(-3) == 3 and abs(0) == 0 and clamp(0, 1, 3) == 1 and clamp(2, 1, 3) == 2 and clamp(9, 1, 3) == 3)
     #|task(id="root:build", node="root", cmd="build", needs=[], required=clamp(abs(-2) + 1, 1, 5) == 3)
     #|entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.max_parallel, 6)
   assert_eq(parsed.ir.nodes.length(), 1)
@@ -3089,7 +3122,7 @@ test "workflow engine: starlark abs and clamp report invalid args" {
     #|node(id="root", depends_on=[], required=abs("x") == 0)
     #|task(id="root:build", node="root", cmd="build", needs=[], required=clamp(1, 3, 2) == 0)
     #|entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("abs() expects int argument"))
   assert_true(text.contains("clamp() requires min <= max"))
@@ -3103,7 +3136,7 @@ test "workflow engine: starlark compatibility supports sum and product helper ca
     #|node(id="root", depends_on=[], required=sum(nums) == 6 and sum(1, 2, 3) == 6 and sum([]) == 0)
     #|task(id="root:build", node="root", cmd="build", needs=[], required=product(nums) == 6 and product(2, 3, 4) == 24 and product([]) == 1)
     #|entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.max_parallel, 6)
   assert_eq(parsed.ir.nodes.length(), 1)
@@ -3119,7 +3152,7 @@ test "workflow engine: starlark sum and product report invalid args" {
     #|node(id="root", depends_on=[], required=sum() == 0)
     #|task(id="root:build", node="root", cmd="build", needs=[], required=product(["x", 1]) == 0)
     #|entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("sum() expects at least 1 argument"))
   assert_true(text.contains("product() expects int arguments or [int]"))
@@ -3136,7 +3169,7 @@ test "workflow engine: starlark compatibility supports list comprehensions" {
     #|node(id="root", depends_on=[], required=len(mapped) == 2 and mapped[0] == 4 and mapped[1] == 5)
     #|task(id="root:build", node="root", cmd="build", needs=[])
     #|entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.nodes.length(), 1)
   assert_eq(parsed.ir.nodes[0].required, true)
@@ -3150,7 +3183,7 @@ test "workflow engine: starlark list comprehension reports invalid iterable" {
     #|node(id="root", depends_on=[])
     #|task(id="root:build", node="root", cmd="build", needs=[])
     #|entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("list comprehension iterable must be iterable"))
 }
@@ -3164,7 +3197,7 @@ test "workflow engine: starlark compatibility supports dict comprehensions" {
     #|node(id="root", depends_on=[], required=len(mapped) == 2 and mapped["2"] == 20 and mapped["3"] == 30 and mapped.get("1") == None)
     #|task(id="root:build", node="root", cmd="build", needs=[])
     #|entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.nodes.length(), 1)
   assert_eq(parsed.ir.nodes[0].required, true)
@@ -3179,7 +3212,7 @@ test "workflow engine: starlark dict comprehension reports invalid iterable and 
     #|node(id="root", depends_on=[], required=len(bad_iter) == 0 and len(bad_key) == 0)
     #|task(id="root:build", node="root", cmd="build", needs=[])
     #|entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("dict comprehension iterable must be iterable"))
   assert_true(text.contains("dict comprehension key must evaluate to string"))
@@ -3197,7 +3230,7 @@ test "workflow engine: starlark compatibility supports tuple literals" {
     #|task(id="base:prep", node="base", cmd="prep", needs=())
     #|task(id="root:build", node="root", cmd="build", needs=needs)
     #|entrypoint(targets=targets)
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.name, "ci")
   assert_eq(parsed.ir.nodes.length(), 2)
@@ -3219,7 +3252,7 @@ test "workflow engine: starlark compatibility supports method call syntax" {
     #|node(id="root", depends_on=[], required="Build".lower() == "build" and "x".upper() == "X" and "root:build".startswith("root:") and "root:build".endswith(":build") and "a-a-a".replace("-", ":", 1) == "a:a-a")
     #|task(id="root:build", node="root", cmd="build", needs=[], required=env.get("MODE") == "prod" and len(env.keys()) == 1 and ["a", "b", "a"].count("a") == 2 and "x/y".split("/")[1] == "y" and "  x  ".strip() == "x" and "  x".lstrip() == "x" and "x  ".rstrip() == "x")
     #|entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.name, "root-build")
   assert_eq(parsed.ir.nodes.length(), 1)
@@ -3235,7 +3268,7 @@ test "workflow engine: starlark method call reports invalid usage" {
     #|node(id="root", depends_on=[], required="x".startswith())
     #|task(id="root:build", node="root", cmd="build", needs=[], required=["a"].unknown())
     #|entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("startswith() expects exactly 1 argument"))
   assert_true(text.contains("unknown list method: unknown"))
@@ -3248,7 +3281,7 @@ test "workflow engine: starlark string method call reports invalid args" {
     #|node(id="root", depends_on=[], required="x".replace("-", ":", -1) == "x")
     #|task(id="root:build", node="root", cmd="build", needs=[], required=" x ".strip(1) == "x")
     #|entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("replace() count must be non-negative int"))
   assert_true(text.contains("strip() expects string argument when provided"))
@@ -3261,7 +3294,7 @@ test "workflow engine: starlark compatibility supports startswith and endswith h
     #|node(id="root", depends_on=[], required=startswith("workflow", "work") and endswith("workflow", "flow"))
     #|task(id="root:build", node="root", cmd="build", needs=[], required=startswith("root:build", "root:") and not endswith("root:build", ":test"))
     #|entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.nodes.length(), 1)
   assert_eq(parsed.ir.nodes[0].required, true)
@@ -3276,7 +3309,7 @@ test "workflow engine: starlark startswith and endswith report invalid args" {
     #|node(id="root", depends_on=[], required=startswith("x"))
     #|task(id="root:build", node="root", cmd="build", needs=[], required=endswith(1, "1"))
     #|entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("startswith() expects exactly 2 arguments"))
   assert_true(text.contains("endswith() expects string arguments"))
@@ -3289,7 +3322,7 @@ test "workflow engine: starlark not applies to comparison expression" {
     #|node(id="root", depends_on=[], required=not "x" == "x")
     #|task(id="root:build", node="root", cmd="build", needs=[])
     #|entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.nodes.length(), 1)
   assert_eq(parsed.ir.nodes[0].required, false)
@@ -3303,7 +3336,7 @@ test "workflow engine: starlark compatibility supports conditional expression" {
     #|node(id="root", depends_on=[], required=(True if mode == "prod" else False))
     #|task(id="root:build", node="root", cmd="build", needs=[], required=(False if mode == "prod" else True))
     #|entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.name, "ci-prod")
   assert_eq(parsed.ir.nodes.length(), 1)
@@ -3319,7 +3352,7 @@ test "workflow engine: starlark conditional expression evaluates only selected b
     #|node(id="root", depends_on=[], required=(True if True else missing_ref))
     #|task(id="root:build", node="root", cmd="build", needs=[], required=(False if False else True))
     #|entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.nodes.length(), 1)
   assert_eq(parsed.ir.nodes[0].required, true)
@@ -3331,7 +3364,7 @@ test "workflow engine: starlark conditional expression evaluates only selected b
 test "workflow engine: starlark conditional expression requires else clause" {
   let src =
     #|workflow(name=("ci" if True))
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("expected 'else' in conditional expression"))
 }
@@ -3344,7 +3377,7 @@ test "workflow engine: starlark compatibility supports unary minus expression" {
     #|node(id="root", depends_on=[], required=(-n < 0))
     #|task(id="root:build", node="root", cmd="build", needs=[], required=(-(1 + 1) < 0))
     #|entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   assert_eq(parsed.errors.length(), 0)
   assert_eq(parsed.ir.max_parallel, 2)
   assert_eq(parsed.ir.nodes.length(), 1)
@@ -3357,7 +3390,7 @@ test "workflow engine: starlark compatibility supports unary minus expression" {
 test "workflow engine: starlark unary minus requires int operand" {
   let src =
     #|workflow(name="ci", max_parallel=-"x")
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("'-' requires int operand"))
 }
@@ -3369,7 +3402,7 @@ test "workflow engine: starlark semantics rejects unknown keyword argument" {
     #|node(id="root", depends_on=[])
     #|task(id="root:build", node="root", cmd="build", needs=[])
     #|entrypoint(targets=["root:build"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("unknown argument"))
 }
@@ -3378,7 +3411,7 @@ test "workflow engine: starlark semantics rejects unknown keyword argument" {
 test "workflow engine: starlark semantics rejects duplicate keyword argument" {
   let src =
     #|workflow(name="ci", name="prod")
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("duplicate argument"))
 }
@@ -3392,7 +3425,7 @@ test "workflow engine: starlark semantics validates list element types" {
     #|task(id="root:build", node="root", cmd="build", needs=[])
     #|task(id="dep:test", node="dep", cmd="test", needs=["root:build"])
     #|entrypoint(targets=["dep:test"])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("depends_on"))
 }
@@ -3403,7 +3436,7 @@ test "workflow engine: starlark compatibility rejects splat arguments" {
     #|workflow(name="ci")
     #|node(id="root", depends_on=[])
     #|task(id="root:build", node="root", cmd="build", *, needs=[])
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("splat arguments"))
 }
@@ -3412,7 +3445,7 @@ test "workflow engine: starlark compatibility rejects splat arguments" {
 test "workflow engine: starlark compatibility requires name=expr keyword syntax" {
   let src =
     #|workflow(1+2 = 3)
-  let parsed = parse(src)
+  let parsed = @workflow.parse(src)
   let text = parsed.errors.join("\n")
   assert_true(text.contains("keyword argument must have form name=expr"))
 }
@@ -3440,7 +3473,7 @@ test "workflow engine: starlark-go errors.star failure subset" {
   ]
   for entry in cases {
     let (source, expected) = entry
-    let parsed = parse(source)
+    let parsed = @workflow.parse(source)
     let text = parsed.errors.join("\n")
     assert_true(text.contains(expected))
   }
@@ -3461,7 +3494,7 @@ test "workflow engine: starlark-go errors.star trailing comma subset" {
     #|entrypoint(targets=['root:build',],)
   let cases = [case_trailing_comma_a, case_trailing_comma_b]
   for source in cases {
-    let parsed = parse(source)
+    let parsed = @workflow.parse(source)
     assert_eq(parsed.errors.length(), 0)
   }
 }
@@ -3475,7 +3508,7 @@ test "workflow engine: starlark-go chunked errors subset is executable" {
   assert_eq(cases.length(), 5)
   for entry in cases {
     let (source, expected) = entry
-    let parsed = parse(source)
+    let parsed = @workflow.parse(source)
     match expected {
       Some(msg) => assert_true(parsed.errors.join("\n").contains(msg))
       None => assert_eq(parsed.errors.length(), 0)
@@ -3495,7 +3528,7 @@ test "workflow engine: execution fixtures validate runtime result contracts" {
     assert_true(case.name.length() > 0)
     assert_true(case.expect_ok is Some(_))
     assert_true(case.expect_state is Some(_))
-    let parsed = parse(case.source)
+    let parsed = @workflow.parse(case.source)
     assert_eq(parsed.errors.length(), 0)
 
     let runner = mock_task_runner(
@@ -3503,7 +3536,7 @@ test "workflow engine: execution fixtures validate runtime result contracts" {
       default_ok=case.runner_default_ok.unwrap_or(true),
       default_message=case.runner_default_message.unwrap_or(""),
     )
-    let result = execute_ir(parsed.ir, runner.run)
+    let result = @workflow.execute_ir(parsed.ir, runner.run)
 
     assert_eq(result.ok, case.expect_ok.unwrap_or(false))
     assert_eq(result.state, case.expect_state.unwrap_or(""))
@@ -3530,7 +3563,7 @@ test "workflow engine: invalid execution fixtures validate ir issue contracts" {
     assert_true(case.name.length() > 0)
     assert_true(case.expect_ok is Some(_))
     assert_true(case.expect_state is Some(_))
-    let parsed = parse(case.source)
+    let parsed = @workflow.parse(case.source)
     assert_eq(parsed.errors.length(), 0)
 
     let runner = mock_task_runner(
@@ -3538,7 +3571,7 @@ test "workflow engine: invalid execution fixtures validate ir issue contracts" {
       default_ok=case.runner_default_ok.unwrap_or(true),
       default_message=case.runner_default_message.unwrap_or(""),
     )
-    let result = execute_ir(parsed.ir, runner.run)
+    let result = @workflow.execute_ir(parsed.ir, runner.run)
 
     assert_eq(result.ok, case.expect_ok.unwrap_or(true))
     assert_eq(result.state, case.expect_state.unwrap_or(""))

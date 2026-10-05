@@ -841,7 +841,7 @@ fn resolve_method_call(
           Str(sep) => {
             let out : Array[StarlarkValue] = []
             for view in text.split(sep) {
-              out.push(Str(view.to_string()))
+              out.push(Str(view.to_owned()))
             }
             return Some(List(out))
           }
@@ -1320,7 +1320,7 @@ fn resolve_expr_call(
       (Str(text), Str(sep)) => {
         let out : Array[StarlarkValue] = []
         for view in text.split(sep) {
-          out.push(Str(view.to_string()))
+          out.push(Str(view.to_owned()))
         }
         Some(List(out))
       }
@@ -1642,7 +1642,7 @@ fn value_truthy(value : StarlarkValue) -> Bool {
 fn copy_expr_bindings(
   source : Map[String, StarlarkValue],
 ) -> Map[String, StarlarkValue] {
-  let copied : Map[String, StarlarkValue] = {}
+  let copied : Map[String, StarlarkValue] = Map([])
   for key, value in source {
     copied[key] = value
   }
@@ -1770,7 +1770,7 @@ fn resolve_value(
         Some(items) => items
         None => return None
       }
-      let resolved_items : Map[String, StarlarkValue] = {}
+      let resolved_items : Map[String, StarlarkValue] = Map([])
       for iter_item in iter_items {
         let local_bindings = copy_expr_bindings(bindings)
         local_bindings[loop_name] = iter_item
@@ -2061,7 +2061,7 @@ fn resolve_value(
       Some(List(resolved))
     }
     Dict(values) => {
-      let resolved : Map[String, StarlarkValue] = {}
+      let resolved : Map[String, StarlarkValue] = Map([])
       for key, item in values {
         match resolve_value(item, bindings, line, column, errors) {
           Some(value) => resolved[key] = value
