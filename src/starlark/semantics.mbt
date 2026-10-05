@@ -60,7 +60,7 @@ const FUNCTION_CALL_MAX_DEPTH : Int = 64
 fn copy_bindings(
   source : Map[String, StarlarkValue],
 ) -> Map[String, StarlarkValue] {
-  let copied : Map[String, StarlarkValue] = {}
+  let copied : Map[String, StarlarkValue] = Map([])
   for key, value in source {
     copied[key] = value
   }
@@ -71,7 +71,7 @@ fn copy_bindings(
 fn copy_functions(
   source : Map[String, StarlarkFunctionDecl],
 ) -> Map[String, StarlarkFunctionDecl] {
-  let copied : Map[String, StarlarkFunctionDecl] = {}
+  let copied : Map[String, StarlarkFunctionDecl] = Map([])
   for key, value in source {
     copied[key] = value
   }
@@ -132,7 +132,7 @@ fn bind_function_args(
   errors : Array[String],
   call_stack : Array[String],
 ) -> Map[String, StarlarkValue]? {
-  let bound : Map[String, StarlarkValue] = {}
+  let bound : Map[String, StarlarkValue] = Map([])
   let mut invalid = false
   if positional_values.length() > fn_decl.params.length() {
     semantic_error_with_stack(
@@ -244,10 +244,10 @@ fn call_function_with_resolved_args(
   let nodes : Array[StarlarkNodeDecl] = []
   let tasks : Array[StarlarkTaskDecl] = []
   let entry_targets : Array[String] = []
-  let var_types : Map[String, String] = {}
-  let required_pending : Map[String, Bool] = {}
-  let required_locations : Map[String, (Int, Int)] = {}
-  let external_inputs : Map[String, String] = {}
+  let var_types : Map[String, String] = Map([])
+  let required_pending : Map[String, Bool] = Map([])
+  let required_locations : Map[String, (Int, Int)] = Map([])
+  let external_inputs : Map[String, String] = Map([])
   let local_functions = copy_functions(functions)
   let (_, _, _, signal) = apply_calls(
     nested.calls,
@@ -320,7 +320,7 @@ fn resolve_value_with_functions(
     }
     Call(name, args) => {
       let positional_args : Array[StarlarkValue] = []
-      let keyword_args : Map[String, StarlarkValue] = {}
+      let keyword_args : Map[String, StarlarkValue] = Map([])
       for arg in args {
         match arg {
           CallKwArg(key, value_expr) =>
@@ -484,7 +484,7 @@ fn resolve_value_with_functions(
         Some(items) => items
         None => return None
       }
-      let resolved_items : Map[String, StarlarkValue] = {}
+      let resolved_items : Map[String, StarlarkValue] = Map([])
       for iter_item in iter_items {
         let local_bindings = copy_bindings(bindings)
         local_bindings[loop_name] = iter_item
@@ -1197,7 +1197,7 @@ fn resolve_value_with_functions(
       Some(List(resolved))
     }
     Dict(values) => {
-      let resolved : Map[String, StarlarkValue] = {}
+      let resolved : Map[String, StarlarkValue] = Map([])
       for key, item in values {
         match
           resolve_value_with_functions(
@@ -1254,7 +1254,7 @@ fn arg_map(
   call : StarlarkCall,
   errors : Array[String],
 ) -> Map[String, StarlarkArg] {
-  let mapped : Map[String, StarlarkArg] = {}
+  let mapped : Map[String, StarlarkArg] = Map([])
   for arg in call.args {
     if mapped.get(arg.name) is Some(_) {
       semantic_error(
@@ -1280,7 +1280,7 @@ fn arg_map_resolved(
   errors : Array[String],
   call_stack? : Array[String] = [],
 ) -> Map[String, StarlarkArg] {
-  let mapped : Map[String, StarlarkArg] = {}
+  let mapped : Map[String, StarlarkArg] = Map([])
   for arg in call.args {
     if mapped.get(arg.name) is Some(_) {
       semantic_error(
@@ -1519,7 +1519,7 @@ fn expect_string_dict(
 ) -> Map[String, String]? {
   match arg.value {
     Dict(values) => {
-      let result : Map[String, String] = {}
+      let result : Map[String, String] = Map([])
       for dict_key, value in values {
         match value {
           Str(text) => result[dict_key] = text
@@ -1818,7 +1818,7 @@ fn parse_external_string_list(raw : String) -> StarlarkValue {
   }
   let items : Array[StarlarkValue] = []
   for view in text.split(",") {
-    let item = trim_ascii_space(view.to_string())
+    let item = trim_ascii_space(view.to_owned())
     items.push(Str(item))
   }
   List(items)
@@ -1830,9 +1830,9 @@ fn parse_external_string_dict(raw : String) -> Map[String, StarlarkValue]? {
   if text.length() == 0 {
     return Some({})
   }
-  let values : Map[String, StarlarkValue] = {}
+  let values : Map[String, StarlarkValue] = Map([])
   for part_view in text.split(",") {
-    let part = trim_ascii_space(part_view.to_string())
+    let part = trim_ascii_space(part_view.to_owned())
     if part.length() == 0 {
       return None
     }
@@ -2396,7 +2396,7 @@ fn apply_calls(
         let mut invalid = false
         let mut fn_name = ""
         let mut params : Array[String] = []
-        let defaults : Map[String, StarlarkValue] = {}
+        let defaults : Map[String, StarlarkValue] = Map([])
         let mut body_source = ""
         match args.get("name") {
           Some(arg) =>
@@ -2455,7 +2455,7 @@ fn apply_calls(
             }
           None => invalid = true
         }
-        let param_seen : Map[String, Bool] = {}
+        let param_seen : Map[String, Bool] = Map([])
         for param in params {
           if param_seen.get(param) is Some(_) {
             semantic_error(
@@ -2479,7 +2479,7 @@ fn apply_calls(
           invalid = true
         }
         if !invalid && fn_name.length() > 0 && body_source.length() > 0 {
-          functions[fn_name] = { params, defaults, body: body_source }
+          functions[fn_name] = { params, defaults, body: body_source, }
         }
       }
       "__return__" => {
@@ -2661,7 +2661,7 @@ fn apply_calls(
         }
 
         if !invalid {
-          nodes.push({ id, depends_on, required })
+          nodes.push({ id, depends_on, required, })
         }
       }
       "task" => {
@@ -2681,7 +2681,7 @@ fn apply_calls(
         let mut required = true
         let mut srcs : Array[String] = []
         let mut outs : Array[String] = []
-        let mut env : Map[String, String] = {}
+        let mut env : Map[String, String] = Map([])
         let mut cwd = ""
         let mut trigger_mode = "auto"
 
@@ -2838,7 +2838,7 @@ fn apply_calls(
               call_stack~,
             )
             let positional_values : Array[StarlarkValue] = []
-            let keyword_values : Map[String, StarlarkValue] = {}
+            let keyword_values : Map[String, StarlarkValue] = Map([])
             for arg in call.args {
               match args.get(arg.name) {
                 Some(value) =>
@@ -2947,11 +2947,11 @@ fn parse_calls_impl(
   let mut workflow_name = "default"
   let mut max_parallel = 1
   let seen_workflow = false
-  let bindings : Map[String, StarlarkValue] = {}
-  let var_types : Map[String, String] = {}
-  let required_pending : Map[String, Bool] = {}
-  let required_locations : Map[String, (Int, Int)] = {}
-  let functions : Map[String, StarlarkFunctionDecl] = {}
+  let bindings : Map[String, StarlarkValue] = Map([])
+  let var_types : Map[String, String] = Map([])
+  let required_pending : Map[String, Bool] = Map([])
+  let required_locations : Map[String, (Int, Int)] = Map([])
+  let functions : Map[String, StarlarkFunctionDecl] = Map([])
 
   let (resolved_workflow_name, resolved_max_parallel, _, _) = apply_calls(
     calls,
@@ -2992,7 +2992,13 @@ fn parse_calls_impl(
   }
 
   {
-    workflow: { name: workflow_name, max_parallel, nodes, tasks, entry_targets },
+    workflow: {
+      name: workflow_name,
+      max_parallel,
+      nodes,
+      tasks,
+      entry_targets,
+    },
     errors,
   }
 }

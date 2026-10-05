@@ -17,7 +17,7 @@ pub fn new_task_cache_writeback_result(
   updated : Array[String],
   issues : Array[String],
 ) -> FlowTaskCacheWritebackResult {
-  { entries, updated, issues }
+  { entries, updated, issues, }
 }
 
 ///|
@@ -27,7 +27,7 @@ fn json_int(value : Int) -> Json {
 
 ///|
 fn cache_decision_json(decision : FlowTaskCacheDecision) -> Json {
-  let fields : Map[String, Json] = {}
+  let fields : Map[String, Json] = Map([])
   fields["id"] = Json::string(decision.id)
   fields["cache_key"] = Json::string(decision.cache_key)
   fields["fingerprint"] = Json::string(decision.fingerprint)
@@ -43,7 +43,7 @@ fn cache_summary_json(result : FlowTaskCachePlanResult) -> Json {
       hits += 1
     }
   }
-  let summary : Map[String, Json] = {}
+  let summary : Map[String, Json] = Map([])
   summary["tasks"] = json_int(result.decisions.length())
   summary["hits"] = json_int(hits)
   summary["misses"] = json_int(result.decisions.length() - hits)
@@ -52,7 +52,7 @@ fn cache_summary_json(result : FlowTaskCachePlanResult) -> Json {
 
 ///|
 fn cache_store_json(entries : Map[String, String]) -> Json {
-  let fields : Map[String, Json] = {}
+  let fields : Map[String, Json] = Map([])
   for key, value in entries {
     fields[key] = Json::string(value)
   }
@@ -74,10 +74,10 @@ pub fn read_flow_cache_store(
   adapter : WorkflowAdapter,
 ) -> FlowCacheStoreResult {
   guard (adapter.fs.read_text)(path) is Some(text) else {
-    return { entries: {}, issues: [] }
+    return { entries: {}, issues: [], }
   }
   if trim_ascii_space(text).length() == 0 {
-    return { entries: {}, issues: [] }
+    return { entries: {}, issues: [], }
   }
   try @json.parse(text) catch {
     err =>
@@ -89,7 +89,7 @@ pub fn read_flow_cache_store(
     doc =>
       try {
         let entries : Map[String, String] = @json.from_json(doc)
-        { entries, issues: [] }
+        { entries, issues: [], }
       } catch {
         err =>
           {
@@ -121,7 +121,7 @@ pub fn render_task_cache_plan_json(result : FlowTaskCachePlanResult) -> String {
   for issue in result.issues {
     issues.push(Json::string(issue))
   }
-  let root : Map[String, Json] = {}
+  let root : Map[String, Json] = Map([])
   root["ok"] = Json::boolean(result.issues.length() == 0)
   root["summary"] = cache_summary_json(result)
   root["decisions"] = Json::array(decisions)
@@ -131,7 +131,7 @@ pub fn render_task_cache_plan_json(result : FlowTaskCachePlanResult) -> String {
 
 ///|
 fn cache_writeback_summary_json(result : FlowTaskCacheWritebackResult) -> Json {
-  let summary : Map[String, Json] = {}
+  let summary : Map[String, Json] = Map([])
   summary["updated"] = json_int(result.updated.length())
   summary["entries"] = json_int(result.entries.length())
   Json::object(summary)
@@ -145,7 +145,7 @@ pub fn render_task_cache_writeback_json(
   for issue in result.issues {
     issues.push(Json::string(issue))
   }
-  let root : Map[String, Json] = {}
+  let root : Map[String, Json] = Map([])
   root["ok"] = Json::boolean(result.issues.length() == 0)
   root["summary"] = cache_writeback_summary_json(result)
   root["updated_task_ids"] = string_array_json(result.updated)
@@ -208,7 +208,7 @@ pub fn plan_task_cache_from_fs(
 ) -> FlowTaskCachePlanResult {
   let parsed = parse_from_fs(path, adapter)
   if parsed.errors.length() > 0 {
-    return { decisions: [], issues: parsed.errors }
+    return { decisions: [], issues: parsed.errors, }
   }
   plan_task_cache(parsed.ir, signatures, cache_entries)
 }
@@ -247,7 +247,7 @@ pub fn plan_task_cache_from_fs_with_inputs(
 ) -> FlowTaskCachePlanResult {
   let parsed = parse_from_fs_with_inputs(path, adapter, external_inputs)
   if parsed.errors.length() > 0 {
-    return { decisions: [], issues: parsed.errors }
+    return { decisions: [], issues: parsed.errors, }
   }
   plan_task_cache(parsed.ir, signatures, cache_entries)
 }
@@ -297,7 +297,7 @@ pub fn plan_task_cache_from_fs_with_cli_env(
     env_prefix~,
   )
   if parsed.errors.length() > 0 {
-    return { decisions: [], issues: parsed.errors }
+    return { decisions: [], issues: parsed.errors, }
   }
   plan_task_cache(parsed.ir, signatures, cache_entries)
 }

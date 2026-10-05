@@ -12,12 +12,12 @@ pub fn new_node(
   depends_on : Array[String],
   required? : Bool = true,
 ) -> FlowNode {
-  { id, required, depends_on }
+  { id, required, depends_on, }
 }
 
 ///|
 fn node_id_set(nodes : Array[FlowNode]) -> Map[String, Bool] {
-  let ids : Map[String, Bool] = {}
+  let ids : Map[String, Bool] = Map([])
   for node in nodes {
     ids[node.id] = true
   }
@@ -26,7 +26,7 @@ fn node_id_set(nodes : Array[FlowNode]) -> Map[String, Bool] {
 
 ///|
 fn node_map(nodes : Array[FlowNode]) -> Map[String, FlowNode] {
-  let result : Map[String, FlowNode] = {}
+  let result : Map[String, FlowNode] = Map([])
   for node in nodes {
     result[node.id] = node
   }
@@ -37,8 +37,8 @@ fn node_map(nodes : Array[FlowNode]) -> Map[String, FlowNode] {
 pub fn topological_nodes(nodes : Array[FlowNode]) -> Array[FlowNode] {
   let ids = node_id_set(nodes)
   let mapped = node_map(nodes)
-  let indegree : Map[String, Int] = {}
-  let dependents : Map[String, Array[String]] = {}
+  let indegree : Map[String, Int] = Map([])
+  let dependents : Map[String, Array[String]] = Map([])
   for node in nodes {
     indegree[node.id] = 0
     dependents[node.id] = []
@@ -62,7 +62,7 @@ pub fn topological_nodes(nodes : Array[FlowNode]) -> Array[FlowNode] {
     }
   }
   let order_ids : Array[String] = []
-  let visited : Map[String, Bool] = {}
+  let visited : Map[String, Bool] = Map([])
   while queue.length() > 0 {
     let current = queue.pop().unwrap_or("")
     if current.length() == 0 || visited.get(current) is Some(_) {
@@ -96,8 +96,8 @@ pub fn topological_nodes(nodes : Array[FlowNode]) -> Array[FlowNode] {
 ///|
 pub fn has_dependency_cycle(nodes : Array[FlowNode]) -> Bool {
   let ids = node_id_set(nodes)
-  let indegree : Map[String, Int] = {}
-  let dependents : Map[String, Array[String]] = {}
+  let indegree : Map[String, Int] = Map([])
+  let dependents : Map[String, Array[String]] = Map([])
   for node in nodes {
     indegree[node.id] = 0
     dependents[node.id] = []
@@ -142,7 +142,7 @@ pub fn has_dependency_cycle(nodes : Array[FlowNode]) -> Bool {
 ///|
 pub fn graph_issues(nodes : Array[FlowNode]) -> Array[String] {
   let issues : Array[String] = []
-  let seen_ids : Map[String, Bool] = {}
+  let seen_ids : Map[String, Bool] = Map([])
   for node in nodes {
     if node.id.length() == 0 {
       issues.push("node id is empty")
@@ -172,12 +172,12 @@ pub fn expand_affected_nodes(
   initial : Map[String, Bool],
 ) -> Map[String, Bool] {
   let known_ids = node_id_set(nodes)
-  let neighbors : Map[String, Array[String]] = {}
+  let neighbors : Map[String, Array[String]] = Map([])
   for node in nodes {
     neighbors[node.id] = []
   }
   for node in nodes {
-    let seen_neighbor : Map[String, Bool] = {}
+    let seen_neighbor : Map[String, Bool] = Map([])
     let next = neighbors.get(node.id).unwrap_or([])
     for dep in node.depends_on {
       if known_ids.get(dep) is Some(_) && seen_neighbor.get(dep) is None {
@@ -197,7 +197,7 @@ pub fn expand_affected_nodes(
       }
     }
   }
-  let affected : Map[String, Bool] = {}
+  let affected : Map[String, Bool] = Map([])
   let queue : Array[String] = []
   for node in nodes {
     if initial.get(node.id) is Some(_) {
@@ -233,7 +233,7 @@ pub fn flow_fingerprint(
   node : FlowNode,
   signatures : Map[String, String],
 ) -> String {
-  let buf = StringBuilder::new()
+  let buf = StringBuilder()
   buf.write_string("task=")
   buf.write_string(task)
   buf.write_string("\nnode=")

@@ -1,9 +1,8 @@
 import {
   "mizchi/bitflow/workflow" @wf,
   "moonbitlang/x/fs" @xfs,
+  "moonbitlang/core/env",
   "moonbitlang/x/sys" @xsys,
 }
 
-options(
-  "is-main": true,
-)
+pkgtype(kind: "executable")

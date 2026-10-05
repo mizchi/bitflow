@@ -57,7 +57,7 @@ pub fn new_task_cache_plan_result(
   decisions : Array[FlowTaskCacheDecision],
   issues : Array[String],
 ) -> FlowTaskCachePlanResult {
-  { decisions, issues }
+  { decisions, issues, }
 }
 
 ///|
@@ -166,7 +166,7 @@ pub fn parse_external_inputs(
   cli_flag? : String = "--var",
   env_prefix? : String = "BITFLOW_VAR_",
 ) -> ExternalInputParseResult {
-  let values : Map[String, String] = {}
+  let values : Map[String, String] = Map([])
   let errors : Array[String] = []
 
   for key, value in env {
@@ -218,7 +218,7 @@ pub fn parse_external_inputs(
     }
     idx += 1
   }
-  { values, errors }
+  { values, errors, }
 }
 
 ///|
@@ -236,7 +236,7 @@ fn merge_parse_errors(
   for err in parsed.errors {
     errors.push(err)
   }
-  { ir: parsed.ir, errors }
+  { ir: parsed.ir, errors, }
 }
 
 ///|
@@ -252,7 +252,7 @@ pub fn new_task(
   cwd? : String = "",
   trigger_mode? : String = "auto",
 ) -> FlowTask {
-  { id, node, cmd, needs, required, srcs, outs, env, cwd, trigger_mode }
+  { id, node, cmd, needs, required, srcs, outs, env, cwd, trigger_mode, }
 }
 
 ///|
@@ -263,7 +263,7 @@ pub fn new_ir(
   entry_targets? : Array[String] = [],
   max_parallel? : Int = 1,
 ) -> FlowIr {
-  { name, max_parallel, nodes, tasks, entry_targets }
+  { name, max_parallel, nodes, tasks, entry_targets, }
 }
 
 ///|
@@ -314,7 +314,7 @@ pub fn flow_task_fingerprint(
   node : FlowNode,
   signatures : Map[String, String],
 ) -> String {
-  let buf = StringBuilder::new()
+  let buf = StringBuilder()
   buf.write_string(flow_fingerprint(task.id, task.cmd, node, signatures))
   buf.write_string("\nrequired=")
   buf.write_string(if task.required { "true" } else { "false" })
@@ -347,7 +347,7 @@ pub fn flow_task_fingerprint(
 
 ///|
 fn task_node_map(tasks : Array[FlowTask]) -> Map[String, FlowTask] {
-  let result : Map[String, FlowTask] = {}
+  let result : Map[String, FlowTask] = Map([])
   for task in tasks {
     result[task.id] = task
   }
@@ -365,7 +365,7 @@ fn task_as_graph_nodes(tasks : Array[FlowTask]) -> Array[FlowNode] {
 
 ///|
 fn node_id_map(nodes : Array[FlowNode]) -> Map[String, FlowNode] {
-  let mapped : Map[String, FlowNode] = {}
+  let mapped : Map[String, FlowNode] = Map([])
   for node in nodes {
     mapped[node.id] = node
   }
@@ -374,7 +374,7 @@ fn node_id_map(nodes : Array[FlowNode]) -> Map[String, FlowNode] {
 
 ///|
 fn selected_task_set(ir : FlowIr) -> Map[String, Bool] {
-  let selected : Map[String, Bool] = {}
+  let selected : Map[String, Bool] = Map([])
   if ir.entry_targets.length() == 0 {
     for task in ir.tasks {
       selected[task.id] = true
@@ -506,7 +506,7 @@ pub fn ir_issues(ir : FlowIr) -> Array[String] {
   for issue in graph_issues(ir.nodes) {
     issues.push("node: " + issue)
   }
-  let seen_task_ids : Map[String, Bool] = {}
+  let seen_task_ids : Map[String, Bool] = Map([])
   let known_node_ids = node_id_set(ir.nodes)
   for task in ir.tasks {
     if task.id.length() == 0 {
@@ -553,7 +553,7 @@ pub fn plan_task_cache(
 ) -> FlowTaskCachePlanResult {
   let issues = ir_issues(ir)
   if issues.length() > 0 {
-    return { decisions: [], issues }
+    return { decisions: [], issues, }
   }
   let selected = selected_task_set(ir)
   let ordered = topological_nodes(task_as_graph_nodes(ir.tasks))
@@ -575,7 +575,7 @@ pub fn plan_task_cache(
       hit: cache_entries.get(cache_key) == Some(fingerprint),
     })
   }
-  { decisions, issues: [] }
+  { decisions, issues: [], }
 }
 
 ///|
@@ -585,7 +585,7 @@ pub fn execute_ir(
 ) -> FlowExecutionResult {
   let issues = ir_issues(ir)
   if issues.length() > 0 {
-    return { ok: false, state: "invalid", order: [], steps: [], issues }
+    return { ok: false, state: "invalid", order: [], steps: [], issues, }
   }
   let selected = selected_task_set(ir)
   let task_map = task_node_map(ir.tasks)
@@ -595,8 +595,8 @@ pub fn execute_ir(
       selected_tasks.push(task)
     }
   }
-  let remaining_deps : Map[String, Int] = {}
-  let dependents : Map[String, Array[String]] = {}
+  let remaining_deps : Map[String, Int] = Map([])
+  let dependents : Map[String, Array[String]] = Map([])
   for task in selected_tasks {
     remaining_deps[task.id] = 0
     dependents[task.id] = []
@@ -622,7 +622,7 @@ pub fn execute_ir(
   let mut ready_idx = 0
   let steps : Array[FlowStep] = []
   let order : Array[String] = []
-  let success : Map[String, Bool] = {}
+  let success : Map[String, Bool] = Map([])
   let mut required_failed = false
   while ready_idx < ready_queue.length() {
     let batch_ids : Array[String] = []
@@ -712,7 +712,7 @@ pub fn execute_ir_for_changed_paths(
 ) -> FlowExecutionResult {
   let targets = entry_targets_for_changed_paths(ir, changed_paths)
   if targets.length() == 0 {
-    return { ok: true, state: "completed", order: [], steps: [], issues: [] }
+    return { ok: true, state: "completed", order: [], steps: [], issues: [], }
   }
   let scoped = new_ir(
     ir.name,
@@ -950,7 +950,7 @@ pub fn execute_from_fs_with_cli_env(
 
 ///|
 fn render_execution_report(result : FlowExecutionResult) -> String {
-  let buf = StringBuilder::new()
+  let buf = StringBuilder()
   buf.write_string("state=")
   buf.write_string(result.state)
   buf.write_string("\n")

@@ -15,7 +15,7 @@ pub fn command_success(
   stdout? : String = "",
   stderr? : String = "",
 ) -> CommandResult {
-  { code: 0, stdout, stderr }
+  { code: 0, stdout, stderr, }
 }
 
 ///|
@@ -25,7 +25,7 @@ pub fn command_failure(
   stderr? : String = "command failed",
 ) -> CommandResult {
   let actual_code = if code == 0 { 1 } else { code }
-  { code: actual_code, stdout, stderr }
+  { code: actual_code, stdout, stderr, }
 }
 
 ///|
@@ -64,7 +64,7 @@ pub fn FsAdapter::new(
   exists : (String) -> Bool,
   list_paths : () -> Array[String],
 ) -> FsAdapter {
-  { read_text, write_text, exists, list_paths }
+  { read_text, write_text, exists, list_paths, }
 }
 
 ///|
@@ -79,7 +79,7 @@ pub fn FsAdapter::none() -> FsAdapter {
 
 ///|
 pub fn FsAdapter::memory_with(initial : Map[String, String]) -> FsAdapter {
-  let store : Map[String, String] = {}
+  let store : Map[String, String] = Map([])
   for path, content in initial {
     store[path] = content
   }
@@ -116,10 +116,10 @@ pub fn WorkflowAdapter::new(
   fs : FsAdapter,
   cmd : CommandAdapter,
 ) -> WorkflowAdapter {
-  { fs, cmd }
+  { fs, cmd, }
 }
 
 ///|
 pub fn WorkflowAdapter::none() -> WorkflowAdapter {
-  { fs: FsAdapter::none(), cmd: CommandAdapter::none() }
+  { fs: FsAdapter::none(), cmd: CommandAdapter::none(), }
 }

@@ -1,19 +1,22 @@
 ///|
 test "workflow cache: reads and writes cache store json" {
-  let entries : Map[String, String] = {}
-  entries[flow_cache_key("root:build", "root")] = "fp-root"
-  entries[flow_cache_key("dep:test", "dep")] = "fp-dep"
-  let adapter = WorkflowAdapter::new(
-    FsAdapter::memory(),
-    CommandAdapter::none(),
+  let entries : Map[String, String] = Map([])
+  entries[@workflow.flow_cache_key("root:build", "root")] = "fp-root"
+  entries[@workflow.flow_cache_key("dep:test", "dep")] = "fp-dep"
+  let adapter = @workflow.WorkflowAdapter::new(
+    @workflow.FsAdapter::memory(),
+    @workflow.CommandAdapter::none(),
   )
-  assert_eq(write_flow_cache_store("cache.json", entries, adapter), true)
+  assert_eq(
+    @workflow.write_flow_cache_store("cache.json", entries, adapter),
+    true,
+  )
   let stored = (adapter.fs.read_text)("cache.json")
   assert_true(stored is Some(_))
   match stored {
     Some(text) => {
       assert_true(@json.valid(text))
-      let loaded = read_flow_cache_store("cache.json", adapter)
+      let loaded = @workflow.read_flow_cache_store("cache.json", adapter)
       assert_eq(loaded.issues.length(), 0)
       assert_eq(loaded.entries, entries)
     }
@@ -23,11 +26,11 @@ test "workflow cache: reads and writes cache store json" {
 
 ///|
 test "workflow cache: invalid store json reports issue" {
-  let adapter = WorkflowAdapter::new(
-    FsAdapter::memory_with({ "cache.json": "{ invalid" }),
-    CommandAdapter::none(),
+  let adapter = @workflow.WorkflowAdapter::new(
+    @workflow.FsAdapter::memory_with({ "cache.json": "{ invalid" }),
+    @workflow.CommandAdapter::none(),
   )
-  let loaded = read_flow_cache_store("cache.json", adapter)
+  let loaded = @workflow.read_flow_cache_store("cache.json", adapter)
   assert_eq(loaded.entries.length(), 0)
   assert_true(loaded.issues.length() > 0)
   assert_true(loaded.issues[0].contains("cache.json"))
@@ -35,24 +38,27 @@ test "workflow cache: invalid store json reports issue" {
 
 ///|
 test "workflow cache: cache plan json is structured and valid" {
-  let nodes = [new_node("root", []), new_node("dep", ["root"])]
-  let tasks = [
-    new_task("root:build", "root", "build", []),
-    new_task("dep:test", "dep", "test", ["root:build"]),
+  let nodes = [
+    @workflow.new_node("root", []),
+    @workflow.new_node("dep", ["root"]),
   ]
-  let ir = new_ir("ci", nodes, tasks, entry_targets=["dep:test"])
+  let tasks = [
+    @workflow.new_task("root:build", "root", "build", []),
+    @workflow.new_task("dep:test", "dep", "test", ["root:build"]),
+  ]
+  let ir = @workflow.new_ir("ci", nodes, tasks, entry_targets=["dep:test"])
   let signatures : Map[String, String] = {
     "root": "sig-root",
     "dep": "sig-dep",
   }
-  let cache : Map[String, String] = {}
-  cache[flow_cache_key("root:build", "root")] = flow_task_fingerprint(
+  let cache : Map[String, String] = Map([])
+  cache[@workflow.flow_cache_key("root:build", "root")] = @workflow.flow_task_fingerprint(
     tasks[0],
     nodes[0],
     signatures,
   )
-  let planned = plan_task_cache(ir, signatures, cache)
-  let text = render_task_cache_plan_json(planned)
+  let planned = @workflow.plan_task_cache(ir, signatures, cache)
+  let text = @workflow.render_task_cache_plan_json(planned)
   assert_true(@json.valid(text))
   assert_true(text.contains("\"ok\": true"))
   assert_true(text.contains("\"hits\": 1"))
@@ -67,20 +73,20 @@ test "workflow cache: plan_task_cache_from_fs uses parsed workflow and cache ent
     #|node(id="root", depends_on=[])
     #|task(id="root:build", node="root", cmd="build", needs=[])
     #|entrypoint(targets=["root:build"])
-  let adapter = WorkflowAdapter::new(
-    FsAdapter::memory_with({ "workflow.star": src }),
-    CommandAdapter::none(),
+  let adapter = @workflow.WorkflowAdapter::new(
+    @workflow.FsAdapter::memory_with({ "workflow.star": src }),
+    @workflow.CommandAdapter::none(),
   )
-  let parsed = parse_from_fs("workflow.star", adapter)
+  let parsed = @workflow.parse_from_fs("workflow.star", adapter)
   assert_eq(parsed.errors.length(), 0)
   let signatures : Map[String, String] = { "root": "sig-root" }
-  let cache : Map[String, String] = {}
-  cache[flow_cache_key("root:build", "root")] = flow_task_fingerprint(
+  let cache : Map[String, String] = Map([])
+  cache[@workflow.flow_cache_key("root:build", "root")] = @workflow.flow_task_fingerprint(
     parsed.ir.tasks[0],
     parsed.ir.nodes[0],
     signatures,
   )
-  let planned = plan_task_cache_from_fs(
+  let planned = @workflow.plan_task_cache_from_fs(
     "workflow.star", adapter, signatures, cache,
   )
   assert_eq(planned.issues.length(), 0)
@@ -90,41 +96,47 @@ test "workflow cache: plan_task_cache_from_fs uses parsed workflow and cache ent
 
 ///|
 test "workflow cache: writeback updates successful task fingerprints into entries" {
-  let nodes = [new_node("root", []), new_node("dep", ["root"])]
-  let tasks = [
-    new_task("root:build", "root", "build", []),
-    new_task("dep:test", "dep", "test", ["root:build"]),
+  let nodes = [
+    @workflow.new_node("root", []),
+    @workflow.new_node("dep", ["root"]),
   ]
-  let ir = new_ir("ci", nodes, tasks, entry_targets=["dep:test"])
+  let tasks = [
+    @workflow.new_task("root:build", "root", "build", []),
+    @workflow.new_task("dep:test", "dep", "test", ["root:build"]),
+  ]
+  let ir = @workflow.new_ir("ci", nodes, tasks, entry_targets=["dep:test"])
   let signatures : Map[String, String] = {
     "root": "sig-root",
     "dep": "sig-dep",
   }
   let cache : Map[String, String] = { "keep::existing": "fp-existing" }
-  let writeback = writeback_task_cache(ir, signatures, cache, [
+  let writeback = @workflow.writeback_task_cache(ir, signatures, cache, [
     "root:build", "dep:test",
   ])
   assert_eq(writeback.issues.length(), 0)
   assert_eq(writeback.updated.length(), 2)
   assert_eq(writeback.entries.get("keep::existing"), Some("fp-existing"))
   assert_eq(
-    writeback.entries.get(flow_cache_key("root:build", "root")),
-    Some(flow_task_fingerprint(tasks[0], nodes[0], signatures)),
+    writeback.entries.get(@workflow.flow_cache_key("root:build", "root")),
+    Some(@workflow.flow_task_fingerprint(tasks[0], nodes[0], signatures)),
   )
   assert_eq(
-    writeback.entries.get(flow_cache_key("dep:test", "dep")),
-    Some(flow_task_fingerprint(tasks[1], nodes[1], signatures)),
+    writeback.entries.get(@workflow.flow_cache_key("dep:test", "dep")),
+    Some(@workflow.flow_task_fingerprint(tasks[1], nodes[1], signatures)),
   )
 }
 
 ///|
 test "workflow cache: writeback reports unknown task ids" {
-  let ir = new_ir("ci", [new_node("root", [])], [
-    new_task("root:build", "root", "build", []),
+  let ir = @workflow.new_ir("ci", [@workflow.new_node("root", [])], [
+    @workflow.new_task("root:build", "root", "build", []),
   ])
-  let writeback = writeback_task_cache(ir, { "root": "sig-root" }, {}, [
-    "missing:task",
-  ])
+  let writeback = @workflow.writeback_task_cache(
+    ir,
+    { "root": "sig-root" },
+    {},
+    ["missing:task"],
+  )
   assert_eq(writeback.updated.length(), 0)
   assert_true(writeback.issues.length() > 0)
   assert_true(writeback.issues[0].contains("missing:task"))
@@ -132,13 +144,16 @@ test "workflow cache: writeback reports unknown task ids" {
 
 ///|
 test "workflow cache: writeback json is structured and valid" {
-  let ir = new_ir("ci", [new_node("root", [])], [
-    new_task("root:build", "root", "build", []),
+  let ir = @workflow.new_ir("ci", [@workflow.new_node("root", [])], [
+    @workflow.new_task("root:build", "root", "build", []),
   ])
-  let writeback = writeback_task_cache(ir, { "root": "sig-root" }, {}, [
-    "root:build",
-  ])
-  let text = render_task_cache_writeback_json(writeback)
+  let writeback = @workflow.writeback_task_cache(
+    ir,
+    { "root": "sig-root" },
+    {},
+    ["root:build"],
+  )
+  let text = @workflow.render_task_cache_writeback_json(writeback)
   assert_true(@json.valid(text))
   assert_true(text.contains("\"ok\": true"))
   assert_true(text.contains("\"updated\": 1"))
@@ -152,13 +167,13 @@ test "workflow cache: writeback roundtrip turns next plan into hit" {
     #|node(id="root", depends_on=[])
     #|task(id="root:build", node="root", cmd="build", needs=[])
     #|entrypoint(targets=["root:build"])
-  let adapter = WorkflowAdapter::new(
-    FsAdapter::memory_with({ "workflow.star": src }),
-    CommandAdapter::none(),
+  let adapter = @workflow.WorkflowAdapter::new(
+    @workflow.FsAdapter::memory_with({ "workflow.star": src }),
+    @workflow.CommandAdapter::none(),
   )
   let signatures : Map[String, String] = { "root": "sig-root" }
 
-  let first_plan = plan_task_cache_from_fs(
+  let first_plan = @workflow.plan_task_cache_from_fs(
     "workflow.star",
     adapter,
     signatures,
@@ -168,7 +183,7 @@ test "workflow cache: writeback roundtrip turns next plan into hit" {
   assert_eq(first_plan.decisions.length(), 1)
   assert_eq(first_plan.decisions[0].hit, false)
 
-  let writeback = writeback_task_cache_from_fs(
+  let writeback = @workflow.writeback_task_cache_from_fs(
     "workflow.star",
     adapter,
     signatures,
@@ -178,13 +193,13 @@ test "workflow cache: writeback roundtrip turns next plan into hit" {
   assert_eq(writeback.issues.length(), 0)
   assert_eq(writeback.updated.length(), 1)
   assert_eq(
-    write_flow_cache_store("cache.json", writeback.entries, adapter),
+    @workflow.write_flow_cache_store("cache.json", writeback.entries, adapter),
     true,
   )
 
-  let loaded = read_flow_cache_store("cache.json", adapter)
+  let loaded = @workflow.read_flow_cache_store("cache.json", adapter)
   assert_eq(loaded.issues.length(), 0)
-  let second_plan = plan_task_cache_from_fs(
+  let second_plan = @workflow.plan_task_cache_from_fs(
     "workflow.star",
     adapter,
     signatures,
