@@ -3,8 +3,7 @@ name = "mizchi/bitflow"
 version = "0.4.2"
 
 import {
-  "moonbitlang/async@0.22.4",
-  "moonbitlang/x@0.5.5",
+  "moonbitlang/x@0.5.7",
 }
 
 source = "src"
