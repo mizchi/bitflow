@@ -39,7 +39,7 @@ pub struct StarlarkTaskDecl {
 
 pub struct StarlarkWorkflowDecl {
   name : String
-  max_parallel : Int
+  max_parallel : Int32
   nodes : Array[StarlarkNodeDecl]
   tasks : Array[StarlarkTaskDecl]
   entry_targets : Array[String]

@@ -2,9 +2,9 @@
 package "mizchi/bitflow"
 
 // Values
-pub fn fib(Int) -> Int64
+pub fn fib(Int32) -> Int64
 
-pub fn sum(data~ : Array[Int], start? : Int, length? : Int) -> Int
+pub fn sum(data~ : Array[Int32], start? : Int32, length? : Int32) -> Int32
 
 // Errors
 

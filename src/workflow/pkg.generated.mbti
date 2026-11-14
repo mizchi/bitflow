@@ -2,7 +2,7 @@
 package "mizchi/bitflow/workflow"
 
 // Values
-pub fn command_failure(code? : Int, stdout? : String, stderr? : String) -> CommandResult
+pub fn command_failure(code? : Int32, stdout? : String, stderr? : String) -> CommandResult
 
 pub fn command_success(stdout? : String, stderr? : String) -> CommandResult
 
@@ -40,7 +40,7 @@ pub fn has_dependency_cycle(Array[FlowNode]) -> Bool
 
 pub fn ir_issues(FlowIr) -> Array[String]
 
-pub fn new_ir(String, Array[FlowNode], Array[FlowTask], entry_targets? : Array[String], max_parallel? : Int) -> FlowIr
+pub fn new_ir(String, Array[FlowNode], Array[FlowTask], entry_targets? : Array[String], max_parallel? : Int32) -> FlowIr
 
 pub fn new_node(String, Array[String], required? : Bool) -> FlowNode
 
@@ -104,7 +104,7 @@ pub fn CommandAdapter::new((String, String?, Map[String, String]) -> CommandResu
 pub fn CommandAdapter::none() -> Self
 
 pub struct CommandResult {
-  code : Int
+  code : Int32
   stdout : String
   stderr : String
 }
@@ -130,7 +130,7 @@ pub struct FlowExecutionResult {
 
 pub struct FlowIr {
   name : String
-  max_parallel : Int
+  max_parallel : Int32
   nodes : Array[FlowNode]
   tasks : Array[FlowTask]
   entry_targets : Array[String]
