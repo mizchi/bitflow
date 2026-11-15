@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented in this file.
 
+## [Unreleased]
+
+## [0.4.3] - 2026-11-15
+
+### Changed
+
+- Drop the unused `moonbitlang/async` dependency. No package imported it,
+  but it kept the standalone async module in every dependent's build graph
+  now that MoonBit ships the runtime as `moonbitlang/core/async`.
+- Bump `moonbitlang/x` to 0.5.7.
+
 ## [0.4.0] - 2026-04-02
 
 ### Added
