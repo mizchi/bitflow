@@ -4,6 +4,8 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-11-15
+
 ### Changed
 
 - Drop the unused `moonbitlang/async` dependency. No package imported it,
